@@ -4,10 +4,13 @@ App móvil (Expo / React Native) que se sincroniza con tu Google Sheet mediante 
 Proyecto independiente: no usa los workspaces del monorepo de Sabor y Sazón.
 
 ## 1. Conectar tu hoja
-1. Abrí tu hoja → **Extensiones → Apps Script** y pegá `apps-script/Code.gs`.
-2. **Configuración del proyecto → Propiedades del script** → agregá `TOKEN` con una clave larga inventada.
-3. **Implementar → Nueva implementación → Aplicación web** (Ejecutar como *Yo*, acceso *Cualquier persona*). Copiá la URL `/exec`.
-4. Si tus datos ya viven en otra pestaña/columnas, ajustá `HOJA` y `COLUMNAS` en el script.
+1. Abrí tu hoja → **Extensiones → Apps Script** y reemplazá el código por `apps-script/Code.gs`.
+2. **Configuración del proyecto → Propiedades del script** → `TOKEN` = una clave larga inventada.
+3. **Implementar → Administrar implementaciones → ✏️ editar → Versión: Nueva versión → Implementar** (la URL `/exec` no cambia).
+
+La app usa el formato de tu pestaña del año (`2026`, `2027`…):
+`Fecha | Concepto | Valor | Tipo | Método | Categoría | Categoría 2 | Cuotas cumplidas | Cuotas totales`.
+Los movimientos nuevos se insertan al final del bloque de su mes. Ingresos van en positivo; egresos y ahorros en negativo.
 
 ## 2. Correr la app
 ```bash

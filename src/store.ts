@@ -3,29 +3,35 @@ import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 import { sheets } from './sheets';
 import type { Movimiento } from './types';
+import { mesActual } from './util';
 
-type Op = { kind: 'upsert'; m: Movimiento } | { kind: 'delete'; id: string };
+type Op = { anio: number } & ({ kind: 'upsert'; m: Movimiento } | { kind: 'delete'; id: string });
 
 interface State {
   url: string;
   token: string;
-  movimientos: Movimiento[];
+  mes: string; // YYYY-MM seleccionado
+  porAnio: Record<string, Movimiento[]>;
   pendientes: Op[];
   sincronizando: boolean;
   error: string | null;
   ultimaSync: string | null;
   setConfig: (url: string, token: string) => void;
+  setMes: (ym: string) => void;
   guardar: (m: Omit<Movimiento, 'id'> & { id?: string }) => Promise<void>;
-  eliminar: (id: string) => Promise<void>;
+  eliminar: (m: Movimiento) => Promise<void>;
   sincronizar: () => Promise<void>;
 }
+
+const anioDe = (fecha: string) => +fecha.slice(0, 4);
 
 export const useFinanzas = create<State>()(
   persist(
     (set, get) => ({
       url: '',
       token: '',
-      movimientos: [],
+      mes: mesActual(),
+      porAnio: {},
       pendientes: [],
       sincronizando: false,
       error: null,
@@ -33,20 +39,38 @@ export const useFinanzas = create<State>()(
 
       setConfig: (url, token) => set({ url: url.trim(), token: token.trim() }),
 
+      setMes: (ym) => {
+        const cambioAnio = ym.slice(0, 4) !== get().mes.slice(0, 4);
+        set({ mes: ym });
+        if (cambioAnio) get().sincronizar();
+      },
+
       // Optimista: se aplica local y se encola; sincronizar() lo envía a la hoja.
       guardar: async (input) => {
-        const m: Movimiento = { ...input, id: input.id ?? `${Date.now()}${Math.random().toString(36).slice(2, 6)}` };
-        set((s) => ({
-          movimientos: [m, ...s.movimientos.filter((x) => x.id !== m.id)],
-          pendientes: [...s.pendientes, { kind: 'upsert', m }],
-        }));
+        const m: Movimiento = { ...input, id: input.id ?? `n-${Date.now()}${Math.random().toString(36).slice(2, 6)}` };
+        const anio = anioDe(m.fecha);
+        set((s) => {
+          const lista = s.porAnio[anio] ?? [];
+          const yaEncolado = s.pendientes.some((p) => p.kind === 'upsert' && p.m.id === m.id);
+          return {
+            porAnio: { ...s.porAnio, [anio]: [m, ...lista.filter((x) => x.id !== m.id)] },
+            pendientes: yaEncolado
+              ? s.pendientes.map((p) => (p.kind === 'upsert' && p.m.id === m.id ? { ...p, anio, m } : p))
+              : [...s.pendientes, { kind: 'upsert', anio, m }],
+          };
+        });
         await get().sincronizar();
       },
 
-      eliminar: async (id) => {
+      eliminar: async (m) => {
+        const anio = anioDe(m.fecha);
+        const nuevo = m.id.startsWith('n-'); // nunca llegó a la hoja: basta con descartarlo
         set((s) => ({
-          movimientos: s.movimientos.filter((x) => x.id !== id),
-          pendientes: [...s.pendientes, { kind: 'delete', id }],
+          porAnio: { ...s.porAnio, [anio]: (s.porAnio[anio] ?? []).filter((x) => x.id !== m.id) },
+          pendientes: [
+            ...s.pendientes.filter((p) => !(p.kind === 'upsert' && p.m.id === m.id)),
+            ...(nuevo ? [] : [{ kind: 'delete', anio, id: m.id } as Op]),
+          ],
         }));
         await get().sincronizar();
       },
@@ -58,13 +82,20 @@ export const useFinanzas = create<State>()(
         try {
           // 1) subir cambios pendientes en orden
           for (const op of [...get().pendientes]) {
-            if (op.kind === 'upsert') await sheets.upsert(url, token, op.m);
-            else await sheets.remove(url, token, op.id);
-            set((s) => ({ pendientes: s.pendientes.slice(1) }));
+            try {
+              if (op.kind === 'upsert') await sheets.upsert(url, token, op.anio, op.m);
+              else await sheets.remove(url, token, op.anio, op.id);
+            } catch (e) {
+              // La fila ya no es la misma en la hoja: se descarta para no trabar la cola.
+              if (!(e instanceof Error) || e.message !== 'FILA_CAMBIO') throw e;
+              set({ error: 'Una fila cambió en la hoja y no se pudo aplicar ese cambio.' });
+            }
+            set((s) => ({ pendientes: s.pendientes.filter((p) => p !== op) }));
           }
-          // 2) bajar el estado de la hoja (fuente de verdad)
-          const movimientos = await sheets.list(url, token);
-          set({ movimientos, ultimaSync: new Date().toISOString() });
+          // 2) bajar el año seleccionado (la hoja es la fuente de verdad)
+          const anio = +get().mes.slice(0, 4);
+          const movimientos = await sheets.list(url, token, anio);
+          set((s) => ({ porAnio: { ...s.porAnio, [anio]: movimientos }, ultimaSync: new Date().toISOString() }));
         } catch (e) {
           set({ error: e instanceof Error ? e.message : 'Error de sincronización' });
         } finally {
@@ -73,9 +104,15 @@ export const useFinanzas = create<State>()(
       },
     }),
     {
-      name: 'finanzas',
+      name: 'finanzas-v2',
       storage: createJSONStorage(() => AsyncStorage),
-      partialize: (s) => ({ url: s.url, token: s.token, movimientos: s.movimientos, pendientes: s.pendientes, ultimaSync: s.ultimaSync }),
+      partialize: (s) => ({ url: s.url, token: s.token, porAnio: s.porAnio, pendientes: s.pendientes, ultimaSync: s.ultimaSync }),
     },
   ),
 );
+
+export const useMovimientosMes = () => {
+  const mes = useFinanzas((s) => s.mes);
+  const lista = useFinanzas((s) => s.porAnio[mes.slice(0, 4)]);
+  return { mes, movimientos: (lista ?? []).filter((m) => m.fecha.startsWith(mes)) };
+};

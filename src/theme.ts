@@ -6,11 +6,11 @@ export const c = {
   muted: '#8a97a6',
   ingreso: '#2ecc8f',
   gasto: '#ff5d6c',
-  accent: '#6c8cff',
+  ahorro: '#f5c542',
+  accent: '#ff4fa3', // rosa de tu hoja
 };
 
-export const CATEGORIAS_GASTO = ['Comida', 'Transporte', 'Casa', 'Servicios', 'Salud', 'Ocio', 'Compras', 'Otros'];
-export const CATEGORIAS_INGRESO = ['Sueldo', 'Ventas', 'Otros'];
-
-export const money = (n: number) =>
-  new Intl.NumberFormat('es', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }).format(n);
+// Opciones iniciales; se completan con los valores que ya existan en tu hoja.
+export const METODOS = ['Efectivo', 'Mercado pago', 'Tarjeta credito', 'Tarjeta debito', 'Paypal', 'Binance'];
+export const CATEGORIAS = ['Sueldo', 'Reserva', 'Cuota', 'Comida', 'Suscripción', 'Servicios', 'Transporte', 'Ahorro', 'Animales', 'Extra'];
+export const CATEGORIAS2 = ['YUSARI', 'Extra'];

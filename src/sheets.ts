@@ -5,14 +5,15 @@ import type { Movimiento } from './types';
 async function call<T>(url: string, token: string, body?: object): Promise<T> {
   const res = body
     ? await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify({ token, ...body }) })
-    : await fetch(`${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`);
+    : await fetch(url);
   const json = await res.json();
   if (json.error) throw new Error(json.error);
   return json as T;
 }
 
 export const sheets = {
-  list: (url: string, token: string) => call<{ movimientos: Movimiento[] }>(url, token).then((r) => r.movimientos),
-  upsert: (url: string, token: string, m: Movimiento) => call(url, token, { action: 'upsert', movimiento: m }),
-  remove: (url: string, token: string, id: string) => call(url, token, { action: 'delete', id }),
+  list: (url: string, token: string, anio: number) =>
+    call<{ movimientos: Movimiento[] }>(`${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}&anio=${anio}`, token).then((r) => r.movimientos),
+  upsert: (url: string, token: string, anio: number, movimiento: Movimiento) => call(url, token, { action: 'upsert', anio, movimiento }),
+  remove: (url: string, token: string, anio: number, id: string) => call(url, token, { action: 'delete', anio, id }),
 };

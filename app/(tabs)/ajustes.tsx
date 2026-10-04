@@ -11,7 +11,7 @@ export default function Ajustes() {
 
   return (
     <View style={{ flex: 1, backgroundColor: c.bg, padding: 16 }}>
-      <Text style={{ color: c.muted, marginBottom: 12 }}>Pegá la URL del Web App de Apps Script y el token que definiste (ver README).</Text>
+      <Text style={{ color: c.muted, marginBottom: 12 }}>Pegá la URL del Web App de Apps Script y el token que definiste (ver README). La app lee la pestaña del año (ej. "2026").</Text>
       <TextInput style={input} placeholder="https://script.google.com/macros/s/…/exec" placeholderTextColor={c.muted} autoCapitalize="none" value={u} onChangeText={setU} />
       <TextInput style={input} placeholder="Token" placeholderTextColor={c.muted} autoCapitalize="none" secureTextEntry value={t} onChangeText={setT} />
       <Pressable
