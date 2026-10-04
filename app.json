@@ -1,0 +1,11 @@
+{
+  "expo": {
+    "name": "Mis Finanzas",
+    "slug": "mis-finanzas",
+    "scheme": "misfinanzas",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0b0f14",
+    "web": { "bundler": "metro", "output": "single" },
+    "plugins": ["expo-router"]
+  }
+}
