@@ -1,8 +1,8 @@
 {
   "expo": {
     "name": "Yuro",
-    "slug": "mis-finanzas",
-    "scheme": "misfinanzas",
+    "slug": "yuro",
+    "scheme": "yuro",
     "userInterfaceStyle": "dark",
     "backgroundColor": "#0b0f14",
     "web": {
@@ -12,10 +12,10 @@
     "plugins": [
       "expo-router"
     ],
-    "version": "1.0.1",
+    "version": "1.0.0",
     "android": {
-      "package": "com.yuriperez15.misfinanzas",
-      "versionCode": 2,
+      "package": "com.yuriperez15.yuro",
+      "versionCode": 1,
       "adaptiveIcon": {
         "backgroundColor": "#0b0f14"
       }
@@ -23,7 +23,7 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "5c3f507a-e844-4170-8938-aff3fee52bcd"
+        "projectId": "d109ad2e-fc75-4640-92a3-58738a142756"
       }
     },
     "owner": "yuriperez15"
