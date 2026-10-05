@@ -1,11 +1,31 @@
 {
   "expo": {
-    "name": "Mis Finanzas",
+    "name": "Yuro",
     "slug": "mis-finanzas",
     "scheme": "misfinanzas",
     "userInterfaceStyle": "dark",
     "backgroundColor": "#0b0f14",
-    "web": { "bundler": "metro", "output": "single" },
-    "plugins": ["expo-router"]
+    "web": {
+      "bundler": "metro",
+      "output": "single"
+    },
+    "plugins": [
+      "expo-router"
+    ],
+    "version": "1.0.1",
+    "android": {
+      "package": "com.yuriperez15.misfinanzas",
+      "versionCode": 2,
+      "adaptiveIcon": {
+        "backgroundColor": "#0b0f14"
+      }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "5c3f507a-e844-4170-8938-aff3fee52bcd"
+      }
+    },
+    "owner": "yuriperez15"
   }
 }
