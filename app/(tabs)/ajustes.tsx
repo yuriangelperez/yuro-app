@@ -1,9 +1,10 @@
 import { Link } from 'expo-router';
 import { useState } from 'react';
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
-import { type FuenteUsd, useFinanzas } from '../../src/store';
-import { c } from '../../src/theme';
-import { Card, centrado, Chip, EstadoSync, MAX_FORM, s, SelectorMoneda, tap, Titulo } from '../../src/ui';
+import { confirmar } from '../../src/alerta';
+import { type FuenteUsd, type Nivel, useCategorias, useFinanzas } from '../../src/store';
+import { c, catInfo } from '../../src/theme';
+import { Card, centrado, Chip, EstadoSync, MAX_FORM, NuevaCategoria, s, SelectorMoneda, tap, Titulo } from '../../src/ui';
 import { money, parseMonto } from '../../src/util';
 
 const FUENTES: { f: FuenteUsd; label: string }[] = [
@@ -37,6 +38,30 @@ const Cotizacion = ({ m }: { m: 'USD' | 'USDT' }) => {
         onBlur={guardar}
       />
     </View>
+  );
+};
+
+// Lista editable: tocá ✕ para borrar una categoría, "+ Nueva" para agregar.
+const ListaCategorias = ({ nivel, titulo }: { nivel: Nivel; titulo: string }) => {
+  const lista = useCategorias(nivel);
+  const borrar = useFinanzas((st) => st.borrarCategoria);
+  const onBorrar = async (x: string) => {
+    tap(true);
+    if (await confirmar('¿Borrar categoría?', `"${x}" deja de aparecer en la lista. Los movimientos que ya la usan no cambian.`, 'Borrar')) borrar(nivel, x);
+  };
+  return (
+    <>
+      <Text style={[s.h, { marginTop: 10, marginBottom: 8 }]}>{titulo}</Text>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+        {lista.map((x) => (
+          <Pressable key={x} onPress={() => onBorrar(x)} style={{ flexDirection: 'row', alignItems: 'center', paddingLeft: 12, paddingRight: 10, paddingVertical: 8, borderRadius: 20, backgroundColor: c.card2, marginRight: 8, marginBottom: 8 }}>
+            <Text style={{ color: c.text }}>{nivel === 'cat' ? `${catInfo(x).emoji} ` : ''}{x}</Text>
+            <Text style={{ color: c.gasto, marginLeft: 8, fontWeight: '700' }}>✕</Text>
+          </Pressable>
+        ))}
+        <NuevaCategoria nivel={nivel} />
+      </View>
+    </>
   );
 };
 
@@ -75,6 +100,12 @@ export default function Ajustes() {
           <Text style={{ color: c.accent, fontWeight: '700' }}>↻ Actualizar desde dolarapi.com</Text>
         </Pressable>
         {cotizaciones.fecha && <Text style={[s.sub, { marginTop: 8 }]}>Actualizada: {new Date(cotizaciones.fecha).toLocaleString()}</Text>}
+      </Card>
+
+      <Card>
+        <Titulo t="🏷️ Categorías" sub="Agregá las tuyas o borrá las que no usás. Borrar una no cambia los movimientos que ya la tienen." />
+        <ListaCategorias nivel="cat" titulo="Categoría" />
+        <ListaCategorias nivel="cat2" titulo="Categoría 2" />
       </Card>
 
       <Card>

@@ -2,10 +2,10 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useMemo, useState } from 'react';
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { avisar, confirmar } from '../src/alerta';
-import { type Recurrente, useFinanzas } from '../src/store';
-import { CATEGORIAS, CATEGORIAS2, METODOS, c, catInfo, metInfo } from '../src/theme';
+import { type Recurrente, useCategorias, useFinanzas } from '../src/store';
+import { METODOS, c, catInfo, metInfo } from '../src/theme';
 import type { Moneda } from '../src/types';
-import { centrado, Chip, MAX_FORM, SelectorMoneda, tap } from '../src/ui';
+import { centrado, Chip, MAX_FORM, NuevaCategoria, SelectorMoneda, tap } from '../src/ui';
 import { hoyYmd, mesActual, money, parseMonto } from '../src/util';
 
 const TIPOS: { t: Recurrente['tipo']; label: string; color: string }[] = [
@@ -33,8 +33,10 @@ export default function EditarRecurrente() {
   const [activo, setActivo] = useState(previo?.activo ?? true);
 
   const metodos = useMemo(() => unir(METODOS, todos.map((m) => m.metodo)), [todos]);
-  const categorias = useMemo(() => unir(CATEGORIAS, todos.map((m) => m.categoria)), [todos]);
-  const categorias2 = useMemo(() => unir(CATEGORIAS2, todos.map((m) => m.categoria2)), [todos]);
+  const listaCat = useCategorias('cat');
+  const listaCat2 = useCategorias('cat2');
+  const categorias = useMemo(() => unir(listaCat, [previo?.categoria ?? '']), [listaCat, previo]);
+  const categorias2 = useMemo(() => unir(listaCat2, [previo?.categoria2 ?? '']), [listaCat2, previo]);
   const color = TIPOS.find((x) => x.t === tipo)!.color;
   const input = { backgroundColor: c.card, color: c.text, borderRadius: 12, padding: 14, borderWidth: 1, borderColor: c.border } as const;
   const n = parseMonto(monto);
@@ -94,6 +96,7 @@ export default function EditarRecurrente() {
       <Etiqueta t="Categoría" />
       <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
         {categorias.map((x) => <Chip key={x} label={`${catInfo(x).emoji} ${x}`} on={categoria === x} color={catInfo(x).color} onPress={() => setCategoria(categoria === x ? '' : x)} />)}
+        <NuevaCategoria nivel="cat" onCreada={setCategoria} />
       </View>
       <Etiqueta t="Método" />
       <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
@@ -102,6 +105,7 @@ export default function EditarRecurrente() {
       <Etiqueta t="Categoría 2" />
       <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
         {categorias2.map((x) => <Chip key={x} label={x} on={categoria2 === x} onPress={() => setCategoria2(categoria2 === x ? '' : x)} />)}
+        <NuevaCategoria nivel="cat2" onCreada={setCategoria2} />
       </View>
 
       {previo && (

@@ -1,5 +1,6 @@
 import { Tabs } from 'expo-router';
 import { Text } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { c } from '../../src/theme';
 import { tap, useLayout } from '../../src/ui';
 
@@ -7,6 +8,8 @@ const icono = (emoji: string) => ({ focused }: { focused: boolean }) => <Text st
 
 export default function TabsLayout() {
   const { escritorio } = useLayout();
+  // En el celu la barra se apoya sobre los botones/gesto del sistema: se suma ese espacio abajo.
+  const abajo = useSafeAreaInsets().bottom;
   return (
     <Tabs
       screenListeners={{ tabPress: () => tap() }}
@@ -19,7 +22,7 @@ export default function TabsLayout() {
         tabBarLabelPosition: escritorio ? 'beside-icon' : 'below-icon',
         tabBarStyle: escritorio
           ? { backgroundColor: c.card, borderRightColor: c.border, width: 230, paddingTop: 16, paddingHorizontal: 8 }
-          : { backgroundColor: c.card, borderTopColor: c.border, height: 64, paddingTop: 6 },
+          : { backgroundColor: c.card, borderTopColor: c.border, height: 62 + abajo, paddingTop: 6, paddingBottom: abajo + 6 },
         tabBarVariant: escritorio ? 'material' : 'uikit',
         tabBarActiveBackgroundColor: escritorio ? c.accent + '26' : undefined,
         tabBarActiveTintColor: c.accent,

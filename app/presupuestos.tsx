@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { ScrollView, Text, TextInput, View } from 'react-native';
-import { convertir, useFinanzas, useMovimientosMes } from '../src/store';
-import { CATEGORIAS, c, catInfo } from '../src/theme';
+import { convertir, useCategorias, useFinanzas, useMovimientosMes } from '../src/store';
+import { c, catInfo } from '../src/theme';
 import type { Moneda } from '../src/types';
 import { Barra, centrado, MAX_FORM, s, SelectorMoneda, Tip } from '../src/ui';
 import { etiquetaMes, money, parseMonto, pct } from '../src/util';
@@ -52,17 +52,17 @@ const Fila = ({ cat, gastadoArs }: { cat: string; gastadoArs: number }) => {
 
 export default function Presupuestos() {
   const { mes, movimientos } = useMovimientosMes();
-  const porAnio = useFinanzas((st) => st.porAnio);
+  const lista = useCategorias('cat');
   const cot = useFinanzas((st) => st.cotizaciones);
 
   // Categorías de gasto conocidas + gastado este mes (en pesos, se convierte en cada fila)
   const { cats, gastado } = useMemo(() => {
-    const usadas = Object.values(porAnio).flat().filter((m) => m.tipo === 'Egreso').map((m) => m.categoria);
     const g: Record<string, number> = {};
     for (const m of movimientos) if (m.tipo === 'Egreso') g[m.categoria] = (g[m.categoria] ?? 0) - (convertir(m.valor, m.moneda, 'ARS', cot) ?? 0);
-    const todas = [...new Set([...CATEGORIAS.filter((x) => !['Sueldo', 'Reserva', 'Ahorro'].includes(x)), ...usadas.filter(Boolean)])];
+    // Tus categorías (sin las de ingreso/ahorro) + cualquiera con gastos este mes, aunque la hayas borrado
+    const todas = [...new Set([...lista.filter((x) => !['Sueldo', 'Reserva', 'Ahorro'].includes(x)), ...Object.keys(g).filter(Boolean)])];
     return { cats: todas.sort((a, b) => (g[b] ?? 0) - (g[a] ?? 0)), gastado: g };
-  }, [porAnio, movimientos, cot]);
+  }, [lista, movimientos, cot]);
 
   return (
     <ScrollView style={{ backgroundColor: c.bg }} contentContainerStyle={{ padding: 16, paddingBottom: 40, ...centrado(MAX_FORM) }} keyboardShouldPersistTaps="handled">

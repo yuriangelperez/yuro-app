@@ -2,10 +2,10 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { avisar, confirmar } from '../src/alerta';
-import { convertir, useFinanzas } from '../src/store';
-import { CATEGORIAS, CATEGORIAS2, METODOS, c, catInfo, metInfo } from '../src/theme';
+import { convertir, useCategorias, useFinanzas } from '../src/store';
+import { METODOS, c, catInfo, metInfo } from '../src/theme';
 import type { Moneda, Movimiento, Tipo } from '../src/types';
-import { centrado, Chip, MAX_FORM, SelectorMoneda, tap } from '../src/ui';
+import { centrado, Chip, MAX_FORM, NuevaCategoria, SelectorMoneda, tap } from '../src/ui';
 import { hoyYmd, money, ymdMenos } from '../src/util';
 
 const Etiqueta = ({ t }: { t: string }) => <Text style={{ color: c.muted, fontSize: 12, marginBottom: 8, marginTop: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>{t}</Text>;
@@ -115,11 +115,24 @@ export default function Nuevo() {
   const [totales, setTotales] = useState(previo?.cuotasTotales != null ? String(previo.cuotasTotales) : '');
 
   const metodos = useMemo(() => unir(METODOS, todos.map((m) => m.metodo)), [todos]);
-  const categorias = useMemo(() => unir(CATEGORIAS, todos.map((m) => m.categoria)), [todos]);
-  const categorias2 = useMemo(() => unir(CATEGORIAS2, todos.map((m) => m.categoria2)), [todos]);
+  // La elegida se muestra aunque la hayas borrado de la lista (ej. al editar un movimiento viejo)
+  const listaCat = useCategorias('cat');
+  const listaCat2 = useCategorias('cat2');
+  const categorias = useMemo(() => unir(listaCat, [previo?.categoria ?? '']), [listaCat, previo]);
+  const categorias2 = useMemo(() => unir(listaCat2, [previo?.categoria2 ?? '']), [listaCat2, previo]);
+  const borrarCategoria = useFinanzas((st) => st.borrarCategoria);
+  const onBorrarCategoria = async (nivel: 'cat' | 'cat2', x: string) => {
+    tap(true);
+    if (!(await confirmar('¿Borrar categoría?', `"${x}" deja de aparecer en la lista. Los movimientos que ya la usan no cambian.`, 'Borrar'))) return;
+    borrarCategoria(nivel, x);
+    if (nivel === 'cat' && categoria === x) setCategoria('');
+    if (nivel === 'cat2' && categoria2 === x) setCategoria2('');
+  };
   const color = TIPOS.find((x) => x.t === tipo)!.color;
   const cambioDoble = tipo === 'Cambio' && !previo; // un cambio nuevo carga las dos monedas
-  const credito = metodo.toLowerCase().includes('credito');
+  const sinTildes = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  // Habilita las cuotas: método de crédito (con o sin tilde), categoría "Cuota" o un movimiento que ya tenía cuotas.
+  const credito = sinTildes(metodo).includes('credito') || sinTildes(categoria) === 'cuota' || !!previo?.cuotasTotales;
   const input = { backgroundColor: c.card, color: c.text, borderRadius: 12, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: c.border } as const;
 
   // Sugerencias: conceptos que ya usaste (los más frecuentes, o los que coinciden con lo que escribís)
@@ -348,7 +361,7 @@ export default function Nuevo() {
               const on = categoria === x;
               return (
                 <View key={x} style={{ width: '25%', padding: 4 }}>
-                  <Pressable onPress={() => { tap(); setCategoria(on ? '' : x); }} style={{ alignItems: 'center', paddingVertical: 10, borderRadius: 14, backgroundColor: on ? i.color + '40' : c.card, borderWidth: 2, borderColor: on ? i.color : 'transparent' }}>
+                  <Pressable onPress={() => { tap(); setCategoria(on ? '' : x); }} onLongPress={() => onBorrarCategoria('cat', x)} style={{ alignItems: 'center', paddingVertical: 10, borderRadius: 14, backgroundColor: on ? i.color + '40' : c.card, borderWidth: 2, borderColor: on ? i.color : 'transparent' }}>
                     <Text style={{ fontSize: 24 }}>{i.emoji}</Text>
                     <Text style={{ color: on ? c.text : c.muted, fontSize: 11, marginTop: 4 }} numberOfLines={1}>{x}</Text>
                   </Pressable>
@@ -356,6 +369,10 @@ export default function Nuevo() {
               );
             })}
           </View>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+            <NuevaCategoria nivel="cat" onCreada={setCategoria} />
+          </View>
+          <Text style={{ color: c.muted, fontSize: 11, marginBottom: 6 }}>Mantené apretada una categoría para borrarla.</Text>
         </>
       )}
 
@@ -376,7 +393,12 @@ export default function Nuevo() {
       )}
 
       <Etiqueta t="Categoría 2" />
-      <Grupo>{categorias2.map((x) => <Chip key={x} label={x} on={categoria2 === x} onPress={() => setCategoria2(categoria2 === x ? '' : x)} />)}</Grupo>
+      <Grupo>
+        {categorias2.map((x) => (
+          <Chip key={x} label={x} on={categoria2 === x} onPress={() => setCategoria2(categoria2 === x ? '' : x)} onLongPress={() => onBorrarCategoria('cat2', x)} />
+        ))}
+        <NuevaCategoria nivel="cat2" onCreada={setCategoria2} />
+      </Grupo>
 
       {puedeRepetir && (
         <Pressable onPress={() => { tap(); setRepetir(!repetir); }} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: repetir ? c.accent + '22' : c.card, borderWidth: 1, borderColor: repetir ? c.accent : c.border, borderRadius: 14, padding: 12, marginTop: 6 }}>
