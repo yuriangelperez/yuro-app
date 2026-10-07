@@ -7,7 +7,7 @@ import { convertir, movimientosDe, saldosAl, useConversor, useFinanzas, useMovim
 import { c, catInfo } from '../../src/theme';
 import type { Moneda, Movimiento } from '../../src/types';
 import { Barra, Card, Columnas, EstadoSync, Fab, Fila, centrado, MesSelector, SelectorMoneda, Tip, Titulo, s, tap } from '../../src/ui';
-import { MESES, diasDelMes, etiquetaMes, hoyYmd, mesActual, money, pct, sumaMes } from '../../src/util';
+import { MESES, diasDelMes, etiquetaMes, hoyYmd, masReciente, mesActual, money, pct, sumaMes } from '../../src/util';
 
 // Totales del mes convertidos a la moneda de vista
 const totales = (lista: Movimiento[], conv: (v: number, de: Moneda) => number) => {
@@ -332,7 +332,7 @@ export default function Resumen() {
         <Text style={[s.h, { marginTop: 4 }]}>Últimos del mes</Text>
         <Card style={{ padding: 0, paddingVertical: 4 }}>
           {movimientos.length === 0 && <Text style={{ color: c.muted, padding: 16 }}>Todavía no hay movimientos. Tocá el + para cargar el primero.</Text>}
-          {[...movimientos].sort((a, b) => b.fecha.localeCompare(a.fecha)).slice(0, 5).map((m) => <Fila key={m.id} m={m} />)}
+          {[...movimientos].sort(masReciente).slice(0, 5).map((m) => <Fila key={m.id} m={m} />)}
         </Card>
         </>} />
       </ScrollView>

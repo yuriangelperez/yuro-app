@@ -5,7 +5,7 @@ import { convertir, saldosAl, useConversor, useFinanzas } from '../../src/store'
 import { c } from '../../src/theme';
 import type { Moneda } from '../../src/types';
 import { Barra, Card, Columnas, Fila, MesSelector, SelectorMoneda, Tip, Titulo, centrado, s, tap } from '../../src/ui';
-import { MESES, mesActual, money, moneyCorto, parseMonto, pct, sumaMes } from '../../src/util';
+import { MESES, masReciente, mesActual, money, moneyCorto, parseMonto, pct, sumaMes } from '../../src/util';
 
 const BANDERA: Record<Moneda, string> = { ARS: '🇦🇷', USD: '💵', USDT: '🪙' };
 const nombreMes = (ym: string) => `${MESES[+ym.slice(5) - 1]} ${ym.slice(0, 4)}`;
@@ -65,7 +65,9 @@ export default function Ahorros() {
   const d = useMemo(() => {
     const lista = porAnio[anio] ?? [];
     const ajuste = Object.entries(ahorrosIniciales[anio] ?? {}).reduce((a, [m, v]) => a + conv(v ?? 0, m as Moneda), 0);
-    let acumulado = ajuste;
+    // Lo que ya llevabas ahorrado al cerrar el año anterior
+    const previo = saldosAl(porAnio, saldosIniciales, ahorrosIniciales, `${+anio - 1}-12`).reduce((a, x) => a + conv(x.ahorrado, x.moneda), 0);
+    let acumulado = previo + ajuste;
     const meses = Array.from({ length: 12 }, (_, i) => {
       const ym = `${anio}-${String(i + 1).padStart(2, '0')}`;
       const delMes = lista.filter((m) => m.fecha.startsWith(ym));
@@ -84,10 +86,10 @@ export default function Ahorros() {
     const ultimos = conDatos.slice(-3);
     const ritmo = ultimos.length ? ultimos.reduce((a, x) => a + x.ahorro, 0) / ultimos.length : 0; // promedio últimos 3 meses
     const gastoMensual = conDatos.length ? conDatos.reduce((a, x) => a + x.gastos, 0) / conDatos.length : 0;
-    const movs = lista.filter((m) => m.tipo === 'Ahorro').sort((a, b) => b.fecha.localeCompare(a.fecha));
+    const movs = lista.filter((m) => m.tipo === 'Ahorro').sort(masReciente);
     const mejor = [...conDatos].sort((a, b) => b.ahorro - a.ahorro)[0];
     return { meses: meses.slice(desde, hasta + 1), ritmo, gastoMensual, movs, mejor, totalAnio: meses.reduce((a, x) => a + x.ahorro, 0), ingresosAnio: meses.reduce((a, x) => a + x.ingresos, 0) };
-  }, [porAnio, anio, hoy, ahorrosIniciales, vista, cotizaciones]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [porAnio, anio, hoy, saldosIniciales, ahorrosIniciales, vista, cotizaciones]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const max = Math.max(1, ...d.meses.map((x) => x.ahorro));
   const mesesCubiertos = d.gastoMensual > 0 ? total / d.gastoMensual : 0;

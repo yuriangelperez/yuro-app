@@ -15,7 +15,7 @@ export const c = {
 // Opciones iniciales; se completan con los valores que ya existan en tu hoja.
 export const METODOS = ['Efectivo', 'Mercado pago', 'Tarjeta credito', 'Tarjeta debito', 'Paypal', 'Binance'];
 export const CATEGORIAS = ['Sueldo', 'Reserva', 'Cuota', 'Comida', 'Suscripción', 'Servicios', 'Transporte', 'Ahorro', 'Animales', 'Extra'];
-export const CATEGORIAS2 = ['YUSARI', 'Extra'];
+export const CATEGORIAS2 = ['Extra'];
 
 type Info = { emoji: string; color: string };
 

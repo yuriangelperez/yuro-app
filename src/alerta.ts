@@ -14,3 +14,17 @@ export const confirmar = (titulo: string, msg: string, ok: string) =>
       { text: ok, style: 'destructive', onPress: () => resolve(true) },
     ], { cancelable: true, onDismiss: () => resolve(false) });
   });
+
+// Texto legible de cualquier error (Error, error de Supabase u objeto suelto); también lo deja en la consola.
+export const mensajeError = (e: unknown): string => {
+  console.error('[yuro]', e);
+  if (typeof e === 'string' && e) return e;
+  if (e && typeof e === 'object') {
+    const o = e as Record<string, unknown>;
+    const partes = [o.message, o.error_description, o.details, o.hint, o.code].filter((x): x is string => typeof x === 'string' && !!x);
+    if (partes.length) return partes.join(' · ');
+    const nombre = e instanceof Error ? e.name : '';
+    try { return `${nombre} ${JSON.stringify(e)}`.trim(); } catch { /* sin detalle */ }
+  }
+  return 'Error desconocido (mirá la consola del navegador)';
+};

@@ -87,7 +87,13 @@ const Fila = ({ anio, base }: { anio: string; base: Saldo }) => {
 export default function Saldos() {
   const porAnio = useFinanzas((st) => st.porAnio);
   const anio = mesActual().slice(0, 4);
-  const base = useMemo(() => saldosAl(porAnio, {}, {}, mesActual()), [porAnio]);
+  const saldosIniciales = useFinanzas((st) => st.saldosIniciales);
+  const ahorrosIniciales = useFinanzas((st) => st.ahorrosIniciales);
+  // Sin los ajustes de este año (los ajustes de años anteriores sí cuentan: es lo que se arrastra)
+  const base = useMemo(() => {
+    const sinAnio = (x: typeof saldosIniciales) => Object.fromEntries(Object.entries(x).filter(([a]) => a !== anio));
+    return saldosAl(porAnio, sinAnio(saldosIniciales), sinAnio(ahorrosIniciales), mesActual());
+  }, [porAnio, saldosIniciales, ahorrosIniciales, anio]);
 
   return (
     <ScrollView style={{ backgroundColor: c.bg }} contentContainerStyle={{ padding: 16, paddingBottom: 40, ...centrado(MAX_FORM) }} keyboardShouldPersistTaps="handled">

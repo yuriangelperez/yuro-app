@@ -6,7 +6,7 @@ import { convertir, useCategorias, useFinanzas } from '../src/store';
 import { METODOS, c, catInfo, metInfo } from '../src/theme';
 import type { Moneda, Movimiento, Tipo } from '../src/types';
 import { centrado, Chip, MAX_FORM, NuevaCategoria, SelectorMoneda, tap } from '../src/ui';
-import { hoyYmd, money, ymdMenos } from '../src/util';
+import { horaAhora, hoyYmd, money, ymdMenos } from '../src/util';
 
 const Etiqueta = ({ t }: { t: string }) => <Text style={{ color: c.muted, fontSize: 12, marginBottom: 8, marginTop: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>{t}</Text>;
 const Grupo = ({ children }: { children: React.ReactNode }) => <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 6 }}>{children}</View>;
@@ -214,14 +214,14 @@ export default function Nuevo() {
     tap(true);
     setEnviado(true);
     const mov = {
-      id: previo?.id, fecha, concepto: concepto.trim(), valor, valorArs: pesos, tipo, metodo, categoria, categoria2, moneda,
+      id: previo?.id, fecha, hora: previo?.hora ?? horaAhora(), concepto: concepto.trim(), valor, valorArs: pesos, tipo, metodo, categoria, categoria2, moneda,
       cuotasCumplidas: credito && cumplidas ? +cumplidas : null,
       cuotasTotales: credito && totales ? +totales : null,
     };
     if (ahorroConPesos) {
       // Los pesos salen de tu billetera en ARS y el ahorro queda en USD/USDT: cambio ARS → moneda + ahorro.
       const ars = Math.abs(pesos!);
-      const cambio = { fecha, tipo: 'Cambio' as Tipo, concepto: `Cambio ARS → ${moneda} (${concepto.trim()})`, metodo, categoria: '', categoria2, cuotasCumplidas: null, cuotasTotales: null };
+      const cambio = { fecha, hora: mov.hora, tipo: 'Cambio' as Tipo, concepto: `Cambio ARS → ${moneda} (${concepto.trim()})`, metodo, categoria: '', categoria2, cuotasCumplidas: null, cuotasTotales: null };
       guardar({ ...cambio, valor: -ars, moneda: 'ARS', valorArs: -ars }, { ...cambio, valor: monto, moneda, valorArs: ars }, mov);
     } else guardar(mov);
     if (repetir && puedeRepetir) {

@@ -1,8 +1,8 @@
 import * as Haptics from 'expo-haptics';
-import { Link } from 'expo-router';
-import { useEffect, useRef } from 'react';
-import { Animated, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
-import { useFinanzas } from './store';
+import { Link, router } from 'expo-router';
+import { useEffect, useRef, useState } from 'react';
+import { Animated, Pressable, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { type Nivel, useFinanzas } from './store';
 import { c, catInfo } from './theme';
 import { MONEDAS, type Moneda, type Movimiento } from './types';
 import { etiquetaMes, fechaCorta, money, sumaMes } from './util';
@@ -83,14 +83,46 @@ export const Tip = ({ id, emoji = '💡', children }: { id: string; emoji?: stri
   );
 };
 
-export const Chip = ({ label, on, onPress, color = c.accent }: { label: string; on: boolean; onPress: () => void; color?: string }) => (
+export const Chip = ({ label, on, onPress, onLongPress, color = c.accent }: { label: string; on: boolean; onPress: () => void; onLongPress?: () => void; color?: string }) => (
   <Pressable
     onPress={() => { tap(); onPress(); }}
+    onLongPress={onLongPress}
     style={{ paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, backgroundColor: on ? color : c.card, borderWidth: 1, borderColor: on ? color : c.border, marginRight: 8, marginBottom: 8 }}
   >
     <Text style={{ color: on ? '#fff' : c.text, fontWeight: on ? '700' : '400' }}>{label}</Text>
   </Pressable>
 );
+
+// Chip "+ Nueva" que se abre en un campo para escribir una categoría; al confirmar la agrega y la elige.
+export const NuevaCategoria = ({ nivel, onCreada }: { nivel: Nivel; onCreada?: (nombre: string) => void }) => {
+  const agregar = useFinanzas((st) => st.agregarCategoria);
+  const [abierto, setAbierto] = useState(false);
+  const [texto, setTexto] = useState('');
+  const confirmar = () => {
+    const n = texto.trim();
+    if (n) { tap(); agregar(nivel, n); onCreada?.(n); }
+    setTexto('');
+    setAbierto(false);
+  };
+  if (!abierto) return <Chip label="＋ Nueva" on={false} onPress={() => setAbierto(true)} />;
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8, gap: 8, flexBasis: '100%' }}>
+      <TextInput
+        autoFocus
+        style={{ flex: 1, backgroundColor: c.card, color: c.text, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, borderColor: c.accent }}
+        placeholder="Nombre de la categoría"
+        placeholderTextColor={c.muted}
+        value={texto}
+        onChangeText={setTexto}
+        returnKeyType="done"
+        onSubmitEditing={confirmar}
+      />
+      <Pressable onPress={confirmar} style={{ backgroundColor: c.accent, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 9 }}>
+        <Text style={{ color: '#fff', fontWeight: '700' }}>Agregar</Text>
+      </Pressable>
+    </View>
+  );
+};
 
 export const MesSelector = () => {
   const mes = useFinanzas((st) => st.mes);
@@ -107,11 +139,11 @@ export const MesSelector = () => {
 
 // Estado de la sincronización con la hoja: script desactualizado, error (con reintento) y cambios en cola.
 export const EstadoSync = () => {
-  const { url, versionScript, error, pendientes, sincronizando, sincronizar } = useFinanzas();
-  if (!url) return null;
+  const { url, nubeUid, versionScript, error, pendientes, sincronizando, sincronizar } = useFinanzas();
+  if (!url && !nubeUid) return null;
   return (
     <>
-      {versionScript !== null && versionScript < 4 && (
+      {!nubeUid && versionScript !== null && versionScript < 4 && (
         <View style={[s.tip, { borderColor: c.gasto, backgroundColor: '#ff5d6c1a' }]}>
           <Text style={{ color: c.text, flex: 1, lineHeight: 19 }}>
             ⚠️ Tu hoja usa una versión vieja del Apps Script: <Text style={{ fontWeight: '700' }}>los movimientos en USD/USDT no se guardan bien</Text>. Pegá el Code.gs nuevo y en
@@ -119,7 +151,7 @@ export const EstadoSync = () => {
           </Text>
         </View>
       )}
-      {error && (
+      {!!error && (
         <Pressable onPress={() => { tap(); sincronizar(); }} style={[s.tip, { borderColor: c.gasto, backgroundColor: '#ff5d6c1a' }]}>
           <Text style={{ color: c.text, flex: 1, lineHeight: 19 }}>⚠️ {error}</Text>
           <Text style={{ color: c.accent, fontWeight: '700', marginLeft: 8 }}>{sincronizando ? '…' : 'Reintentar'}</Text>
@@ -127,7 +159,7 @@ export const EstadoSync = () => {
       )}
       {pendientes.length > 0 && (
         <Text style={{ color: c.aviso, marginBottom: 8 }}>
-          ⏳ {pendientes.length} cambio(s) todavía no llegaron a la hoja{sincronizando ? ' · subiendo…' : ''}
+          ⏳ {pendientes.length} cambio(s) todavía no llegaron a {nubeUid ? 'la nube' : 'la hoja'}{sincronizando ? ' · subiendo…' : ''}
         </Text>
       )}
     </>
@@ -136,7 +168,7 @@ export const EstadoSync = () => {
 
 const Pendiente = ({ id }: { id: string }) => {
   // Sin hoja conectada todo vive en el teléfono: no hay nada "sin subir"
-  const enCola = useFinanzas((st) => !!st.url && st.pendientes.some((p) => p.kind === 'upsert' && p.m.id === id));
+  const enCola = useFinanzas((st) => (!!st.url || !!st.nubeUid) && st.pendientes.some((p) => p.kind === 'upsert' && p.m.id === id));
   return enCola ? <Text style={{ color: c.aviso, fontSize: 11 }}>⏳ sin subir</Text> : null;
 };
 
@@ -150,6 +182,7 @@ export const Fila = ({ m, conFecha = true }: { m: Movimiento; conFecha?: boolean
         <Text style={s.sub} numberOfLines={1}>
           {[m.categoria || m.tipo, m.metodo].filter(Boolean).join(' · ')}
           {conFecha ? ` · ${fechaCorta(m.fecha)}` : ''}
+          {m.hora ? ` · ${m.hora}` : ''}
           {m.cuotasTotales ? ` · cuota ${m.cuotasCumplidas ?? 0}/${m.cuotasTotales}` : ''}
         </Text>
       </View>
@@ -173,12 +206,13 @@ export const SelectorMoneda = ({ valor, onChange, chico = false }: { valor: Mone
   </View>
 );
 
+// El color va en un View propio: en Android el Link con asChild no siempre pasaba el fondo al botón.
 export const Fab = () => (
-  <Link href="/nuevo" asChild>
-    <Pressable onPressIn={() => tap(true)} style={s.fab} android_ripple={{ color: '#ffffff55', borderless: true }}>
-      <Text style={{ color: '#fff', fontSize: 30, marginTop: -2 }}>+</Text>
+  <View style={s.fab}>
+    <Pressable onPress={() => { tap(true); router.push('/nuevo'); }} style={s.fabBtn} android_ripple={{ color: '#ffffff55' }}>
+      <Text style={{ color: '#fff', fontSize: 32, lineHeight: 36, fontWeight: '600' }}>+</Text>
     </Pressable>
-  </Link>
+  </View>
 );
 
 export const s = StyleSheet.create({
@@ -187,7 +221,8 @@ export const s = StyleSheet.create({
   fila: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 14 },
   titulo: { color: c.text, fontSize: 15, fontWeight: '600' },
   sub: { color: c.muted, fontSize: 12, marginTop: 2 },
-  fab: { position: 'absolute', right: 20, bottom: 20, width: 60, height: 60, borderRadius: 30, backgroundColor: c.accent, alignItems: 'center', justifyContent: 'center', boxShadow: `0 4px 10px ${c.accent}80` },
+  fab: { position: 'absolute', right: 20, bottom: 20, width: 60, height: 60, borderRadius: 30, backgroundColor: c.accent, overflow: 'hidden', elevation: 6, shadowColor: c.accent, shadowOpacity: 0.5, shadowRadius: 10, shadowOffset: { width: 0, height: 4 } },
+  fabBtn: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: c.accent },
   h: { color: c.muted, fontSize: 12, marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 },
   big: { color: c.text, fontSize: 34, fontWeight: '800' },
   mes: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 8 },

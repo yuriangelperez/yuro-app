@@ -7,6 +7,7 @@ export const MONEDAS: Moneda[] = ['ARS', 'USD', 'USDT'];
 export interface Movimiento {
   id: string; // "fila|fecha|concepto" (o "n-…" si todavía no está en la hoja)
   fecha: string; // YYYY-MM-DD
+  hora?: string | null; // HH:MM (hora argentina); solo en movimientos de la nube, importados o cargados desde la app
   concepto: string;
   valor: number; // con signo, igual que en la hoja: egresos negativos
   tipo: Tipo;

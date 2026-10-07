@@ -9,6 +9,13 @@ export const hoyYmd = () => {
   const d = new Date();
   return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
 };
+export const horaAhora = () => {
+  const d = new Date();
+  return `${p2(d.getHours())}:${p2(d.getMinutes())}`;
+};
+// Más reciente primero: por fecha y, dentro del día, por hora
+export const masReciente = (a: { fecha: string; hora?: string | null }, b: { fecha: string; hora?: string | null }) =>
+  b.fecha.localeCompare(a.fecha) || (b.hora ?? '').localeCompare(a.hora ?? '');
 export const mesActual = () => hoyYmd().slice(0, 7);
 export const etiquetaMes = (ym: string) => `${MESES[+ym.slice(5) - 1]} ${ym.slice(0, 4)}`;
 export const sumaMes = (ym: string, delta: number) => {

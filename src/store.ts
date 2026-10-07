@@ -1,9 +1,16 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useMemo } from 'react';
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
+import { type DatosNube, esUuid, nube, nuevoId, requiereSesion } from './nube';
 import { sheets } from './sheets';
+import { CATEGORIAS, CATEGORIAS2 } from './theme';
 import { MONEDAS, type Moneda, type Movimiento } from './types';
 import { diasDelMes, hoyYmd, mesActual, sumaMes } from './util';
+
+// Las dos listas de categorías del formulario: "cat" (Categoría) y "cat2" (Categoría 2).
+export type Nivel = 'cat' | 'cat2';
+type PorNivel = Record<Nivel, string[]>;
 
 export type FuenteUsd = 'blue' | 'oficial' | 'bolsa';
 export type Presupuesto = { monto: number; moneda: Moneda };
@@ -40,6 +47,10 @@ interface State {
   versionScript: number | null; // versión de Code.gs publicada (null = todavía no se sabe)
   presupuestos: Record<string, Presupuesto>; // tope mensual de gasto por categoría
   tipsOcultos: string[];
+  catExtra: PorNivel; // categorías que agregaste a mano
+  catOcultas: PorNivel; // categorías borradas (no se ofrecen más; los movimientos viejos las conservan)
+  agregarCategoria: (nivel: Nivel, nombre: string) => void;
+  borrarCategoria: (nivel: Nivel, nombre: string) => void;
   recurrentes: Recurrente[];
   recienGenerados: string[]; // conceptos cargados solos en la última pasada (para avisar)
   guardarRecurrente: (r: Omit<Recurrente, 'id'> & { id?: string }) => void;
@@ -67,6 +78,9 @@ interface State {
   guardar: (...ms: (Omit<Movimiento, 'id'> & { id?: string })[]) => Promise<void>;
   eliminar: (m: Movimiento) => Promise<void>;
   sincronizar: () => Promise<void>;
+  nubeUid: string | null; // cuenta de Supabase a la que está atado este teléfono (null = datos locales / Google Sheets)
+  conectarNube: (opts: { subirLocal: boolean }) => Promise<void>;
+  desconectarNube: () => void;
 }
 
 const anioDe = (fecha: string) => +fecha.slice(0, 4);
@@ -80,6 +94,7 @@ export const useFinanzas = create<State>()(
       porAnio: {},
       pendientes: [],
       sincronizando: false,
+      nubeUid: null,
       error: null,
       ultimaSync: null,
       versionScript: null,
@@ -89,12 +104,32 @@ export const useFinanzas = create<State>()(
       metaAhorro: null,
       setMetaAhorro: (metaAhorro) => set({ metaAhorro }),
       tipsOcultos: [],
+      catExtra: { cat: [], cat2: [] },
+      catOcultas: { cat: [], cat2: ['YUSARI'] },
+      agregarCategoria: (nivel, nombre) =>
+        set((s) => {
+          const n = nombre.trim();
+          if (!n) return {};
+          const k = claveCat(n);
+          return {
+            catOcultas: { ...s.catOcultas, [nivel]: s.catOcultas[nivel].filter((x) => claveCat(x) !== k) },
+            catExtra: { ...s.catExtra, [nivel]: [...s.catExtra[nivel].filter((x) => claveCat(x) !== k), n] },
+          };
+        }),
+      borrarCategoria: (nivel, nombre) =>
+        set((s) => {
+          const k = claveCat(nombre);
+          return {
+            catExtra: { ...s.catExtra, [nivel]: s.catExtra[nivel].filter((x) => claveCat(x) !== k) },
+            catOcultas: { ...s.catOcultas, [nivel]: [...s.catOcultas[nivel].filter((x) => claveCat(x) !== k), nombre] },
+          };
+        }),
       recurrentes: [],
       recienGenerados: [],
 
       guardarRecurrente: (r) =>
         set((s) => {
-          const nuevo: Recurrente = { ...r, id: r.id ?? `r-${Date.now()}${Math.random().toString(36).slice(2, 6)}` };
+          const nuevo: Recurrente = { ...r, id: r.id ?? nuevoId() };
           return { recurrentes: r.id ? s.recurrentes.map((x) => (x.id === r.id ? nuevo : x)) : [...s.recurrentes, nuevo] };
         }),
       borrarRecurrente: (id) => set((s) => ({ recurrentes: s.recurrentes.filter((x) => x.id !== id) })),
@@ -179,7 +214,7 @@ export const useFinanzas = create<State>()(
       // Acepta varios movimientos (ej. las dos patas de un cambio de moneda).
       guardar: async (...inputs) => {
         for (const input of inputs) {
-          const m: Movimiento = { ...input, id: input.id ?? `n-${Date.now()}${Math.random().toString(36).slice(2, 6)}` };
+          const m: Movimiento = { ...input, id: input.id ?? (get().nubeUid ? nuevoId() : `n-${Date.now()}${Math.random().toString(36).slice(2, 6)}`) };
           const anio = anioDe(m.fecha);
           set((s) => {
             const lista = s.porAnio[anio] ?? [];
@@ -213,8 +248,95 @@ export const useFinanzas = create<State>()(
         await get().sincronizar();
       },
 
+      conectarNube: async ({ subirLocal }) => {
+        const uid = await requiereSesion();
+        let porAnio = get().porAnio;
+        if (subirLocal) {
+          const { url, token } = get();
+          // Con una hoja conectada, primero se sube lo pendiente y después se lee la hoja entera (es la fuente de verdad).
+          if (url && token) {
+            await get().sincronizar();
+            if (get().error || get().pendientes.length) throw new Error('Antes de migrar hay que sincronizar bien con Google Sheets');
+            const hoy = new Date().getFullYear();
+            porAnio = { ...porAnio };
+            for (const a of new Set([hoy, hoy - 1, ...Object.keys(porAnio).map(Number)])) {
+              try {
+                const r = await sheets.list(url, token, a);
+                if (r.version < 3) throw new Error('Actualizá el Apps Script antes de migrar: la versión vieja no guarda la moneda');
+                porAnio[a] = r.movimientos;
+              } catch (e) {
+                if (!(e instanceof Error) || !e.message.includes('No existe la pestaña')) throw e;
+              }
+            }
+          }
+          // Solo se sube lo que todavía no está en la nube (ids no uuid). Repetir la migración no duplica nada.
+          const conteo = new Map<string, number>();
+          const movs = Object.values(porAnio).flat().filter((m) => !esUuid(m.id)).map((m) => {
+            const base = `${m.fecha}|${m.concepto}|${m.valor}|${m.moneda}`;
+            const k = conteo.get(base) ?? 0;
+            conteo.set(base, k + 1);
+            return { m, externalId: `mig|${base}|${k}` };
+          });
+          await nube.importar(uid, movs);
+          set((s) => ({ recurrentes: s.recurrentes.map((r) => (esUuid(r.id) ? r : { ...r, id: nuevoId() })) }));
+          await nube.subirAjustes(ajustesDe(get()));
+        }
+        // Se baja todo de la nube: de acá en más los ids locales son los de la base.
+        const todos = await nube.listar('1900-01-01', '2999-12-31');
+        const nuevo: Record<string, Movimiento[]> = {};
+        for (const m of todos) (nuevo[m.fecha.slice(0, 4)] ??= []).push(m);
+        const ajustes = subirLocal ? null : await nube.bajarAjustes();
+        aplicandoRemoto = true;
+        set({ ...ajustes, nubeUid: uid, porAnio: nuevo, pendientes: [], error: null, ultimaSync: new Date().toISOString() });
+        aplicandoRemoto = false;
+      },
+
+      desconectarNube: () =>
+        set({
+          nubeUid: null, porAnio: {}, pendientes: [], recienGenerados: [], ultimaSync: null, presupuestos: {}, recurrentes: [], saldosIniciales: {}, ahorrosIniciales: {},
+          metaAhorro: null, catExtra: { cat: [], cat2: [] }, catOcultas: { cat: [], cat2: ['YUSARI'] },
+        }),
+
       sincronizar: async () => {
         const { url, token, sincronizando } = get();
+        const sincronizarNube = async () => {
+          if (sincronizando) return;
+          set({ sincronizando: true, error: null });
+          try {
+            await requiereSesion();
+            let op: Op | undefined;
+            while ((op = get().pendientes[0])) {
+              try {
+                if (op.kind === 'upsert') await nube.guardar(op.m);
+                else await nube.borrar(op.id);
+              } catch (e) {
+                const que = op.kind === 'upsert' ? `subir "${op.m.concepto}"` : 'borrar un movimiento';
+                throw new Error(`No se pudo ${que}: ${e instanceof Error ? e.message : e}`);
+              }
+              const hecho = op;
+              set((s) => ({ pendientes: s.pendientes.filter((p) => p !== hecho) }));
+            }
+            const anio = +get().mes.slice(0, 4);
+            const bajados = await nube.listar(`${anio}-01-01`, `${anio}-12-31`);
+            set((s) => {
+              // Lo que se cargó mientras se bajaba todavía no está en la nube: se mantiene a la vista hasta subirlo
+              const enCola = s.pendientes.flatMap((p) => (p.kind === 'upsert' && p.anio === anio ? [p.m] : []));
+              const lista = [...enCola, ...bajados.filter((m) => !enCola.some((x) => x.id === m.id))];
+              return { porAnio: { ...s.porAnio, [anio]: lista }, ultimaSync: new Date().toISOString() };
+            });
+            // Los saldos arrastran de un año al siguiente: si todavía no están los años anteriores, se bajan (una sola vez).
+            if (!((anio - 1) in get().porAnio)) {
+              const antes: Record<string, Movimiento[]> = { [anio - 1]: [] };
+              for (const m of await nube.listar('1900-01-01', `${anio - 1}-12-31`)) (antes[m.fecha.slice(0, 4)] ??= []).push(m);
+              set((s) => ({ porAnio: { ...antes, ...s.porAnio } }));
+            }
+          } catch (e) {
+            set({ error: e instanceof Error ? e.message : 'Error de sincronización' });
+          } finally {
+            set({ sincronizando: false });
+          }
+          if (!get().error && get().pendientes.length) await get().sincronizar();
+        };
         // Un alta ya subida pasa a tener su id real: si se edita o borra antes de recargar, no se duplica.
         const reemplazarId = (viejo: string, nuevo: string) =>
           set((s) => ({
@@ -223,6 +345,7 @@ export const useFinanzas = create<State>()(
           }));
         const { fecha } = get().cotizaciones;
         if (!fecha || Date.now() - Date.parse(fecha) > 3600_000) get().actualizarCotizaciones();
+        if (get().nubeUid) return sincronizarNube();
         if (!url || !token || sincronizando) return;
         set({ sincronizando: true, error: null });
         try {
@@ -283,12 +406,50 @@ export const useFinanzas = create<State>()(
         return st as State;
       },
       partialize: (s) => ({
-        url: s.url, token: s.token, porAnio: s.porAnio, pendientes: s.pendientes, ultimaSync: s.ultimaSync, versionScript: s.versionScript,
-        presupuestos: s.presupuestos, recurrentes: s.recurrentes, recienGenerados: s.recienGenerados, saldosIniciales: s.saldosIniciales, ahorrosIniciales: s.ahorrosIniciales, metaAhorro: s.metaAhorro, tipsOcultos: s.tipsOcultos, monedaVista: s.monedaVista, fuenteUsd: s.fuenteUsd, cotizaciones: s.cotizaciones,
+        nubeUid: s.nubeUid, url: s.url, token: s.token, porAnio: s.porAnio, pendientes: s.pendientes, ultimaSync: s.ultimaSync, versionScript: s.versionScript,
+        presupuestos: s.presupuestos, recurrentes: s.recurrentes, recienGenerados: s.recienGenerados, saldosIniciales: s.saldosIniciales, ahorrosIniciales: s.ahorrosIniciales, metaAhorro: s.metaAhorro, tipsOcultos: s.tipsOcultos, catExtra: s.catExtra, catOcultas: s.catOcultas, monedaVista: s.monedaVista, fuenteUsd: s.fuenteUsd, cotizaciones: s.cotizaciones,
       }),
     },
   ),
 );
+
+// Los ajustes (presupuestos, recurrentes, saldos…) se suben solos a la nube unos segundos después de cada cambio.
+const ajustesDe = (s: State): DatosNube => ({
+  monedaVista: s.monedaVista, fuenteUsd: s.fuenteUsd, metaAhorro: s.metaAhorro, presupuestos: s.presupuestos, recurrentes: s.recurrentes,
+  saldosIniciales: s.saldosIniciales, ahorrosIniciales: s.ahorrosIniciales, catExtra: s.catExtra, catOcultas: s.catOcultas,
+});
+let aplicandoRemoto = false;
+let temporizador: ReturnType<typeof setTimeout> | undefined;
+useFinanzas.subscribe((s, previo) => {
+  if (!s.nubeUid || aplicandoRemoto) return;
+  const a = ajustesDe(s);
+  const b = ajustesDe(previo);
+  if ((Object.keys(a) as (keyof DatosNube)[]).every((k) => a[k] === b[k])) return;
+  clearTimeout(temporizador);
+  temporizador = setTimeout(() => {
+    nube.subirAjustes(ajustesDe(useFinanzas.getState())).catch((e) => useFinanzas.setState({ error: `No se pudieron guardar los ajustes: ${e instanceof Error ? e.message : e}` }));
+  }, 2000);
+});
+
+const claveCat = (s: string) => s.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+// Categorías para elegir: las de base + las que agregaste + las usadas en la hoja, sin las borradas.
+export const useCategorias = (nivel: Nivel) => {
+  const porAnio = useFinanzas((s) => s.porAnio);
+  const extra = useFinanzas((s) => s.catExtra[nivel]);
+  const ocultas = useFinanzas((s) => s.catOcultas[nivel]);
+  return useMemo(() => {
+    const fuera = new Set(ocultas.map(claveCat));
+    const vistas = new Set<string>();
+    const usadas = Object.values(porAnio).flat().map((m) => (nivel === 'cat' ? m.categoria : m.categoria2));
+    return [...(nivel === 'cat' ? CATEGORIAS : CATEGORIAS2), ...extra, ...usadas].filter((x) => {
+      const k = claveCat(x ?? '');
+      if (!k || fuera.has(k) || vistas.has(k)) return false;
+      vistas.add(k);
+      return true;
+    });
+  }, [porAnio, extra, ocultas, nivel]);
+};
 
 export const movimientosDe = (porAnio: Record<string, Movimiento[]>, ym: string) =>
   (porAnio[ym.slice(0, 4)] ?? []).filter((m) => m.fecha.startsWith(ym));
@@ -322,19 +483,28 @@ export const useConversor = () => {
 export type Saldo = { moneda: Moneda; disponible: number; ahorrado: number; total: number; usada: boolean };
 type Ajustes = State['saldosIniciales'];
 
-// Cuánto tenés de cada moneda al cierre del mes `ym`, sumando los movimientos del año hasta ese mes.
+// Cuánto tenés de cada moneda al cierre del mes `ym`. Arrastra año a año: lo que cerró diciembre es lo que abre enero.
 // - total: saldo inicial + todo lo que entró/salió (los movimientos de Ahorro no restan: esa plata sigue siendo tuya)
 // - ahorrado: ajuste de ahorro + movimientos de Ahorro. Ajustarlo solo mueve plata entre disponible y ahorrado.
+// Los ajustes de cada año (iniciales / ahorros) se suman al saldo que venía del año anterior.
 export const saldosAl = (porAnio: Record<string, Movimiento[]>, iniciales: Ajustes, ahorros: Ajustes, ym: string): Saldo[] => {
-  const anio = ym.slice(0, 4);
-  const lista = (porAnio[anio] ?? []).filter((m) => m.fecha.slice(0, 7) <= ym);
+  const anio = +ym.slice(0, 4);
+  const conDatos = Object.keys(porAnio).filter((a) => porAnio[a]?.length);
+  const primero = Math.min(anio, ...[...conDatos, ...Object.keys(iniciales), ...Object.keys(ahorros)].map(Number));
   return MONEDAS.map((moneda) => {
-    const l = lista.filter((m) => m.moneda === moneda);
-    const inicial = iniciales[anio]?.[moneda] ?? 0;
-    const ahorroIni = ahorros[anio]?.[moneda] ?? 0;
-    const ahorroMov = -l.filter((m) => m.tipo === 'Ahorro').reduce((a, m) => a + m.valor, 0);
-    const total = inicial + l.reduce((a, m) => a + m.valor, 0) + ahorroMov;
-    const ahorrado = ahorroIni + ahorroMov;
-    return { moneda, disponible: total - ahorrado, ahorrado, total, usada: l.length > 0 || inicial !== 0 || ahorroIni !== 0 };
+    let total = 0;
+    let ahorrado = 0;
+    let usada = false;
+    for (let a = primero; a <= anio; a++) {
+      const hasta = a === anio ? ym : `${a}-12`;
+      const l = (porAnio[a] ?? []).filter((m) => m.moneda === moneda && m.fecha.slice(0, 7) <= hasta);
+      const inicial = iniciales[a]?.[moneda] ?? 0;
+      const ahorroIni = ahorros[a]?.[moneda] ?? 0;
+      const ahorroMov = -l.filter((m) => m.tipo === 'Ahorro').reduce((x, m) => x + m.valor, 0);
+      total += inicial + l.reduce((x, m) => x + m.valor, 0) + ahorroMov;
+      ahorrado += ahorroIni + ahorroMov;
+      usada ||= l.length > 0 || inicial !== 0 || ahorroIni !== 0;
+    }
+    return { moneda, disponible: total - ahorrado, ahorrado, total, usada };
   });
 };

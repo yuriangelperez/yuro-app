@@ -10,12 +10,13 @@
       "output": "single"
     },
     "plugins": [
-      "expo-router"
+      "expo-router",
+      "expo-web-browser"
     ],
-    "version": "1.0.0",
+    "version": "1.0.2",
     "android": {
       "package": "com.yuriperez15.yuro",
-      "versionCode": 1,
+      "versionCode": 3,
       "adaptiveIcon": {
         "backgroundColor": "#0b0f14"
       }
