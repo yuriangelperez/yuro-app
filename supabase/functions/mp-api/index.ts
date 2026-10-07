@@ -175,7 +175,8 @@ async function importarCsv(uid: string, texto: string, token: string, miId: numb
 
 // ───────── Acciones ─────────
 
-const VOLVER_OK = ['yuro://', 'exp://', 'http://localhost'];
+// Con ':' o '/' para que 'http://localhost.sitio-ajeno.com' no pase la validación
+const VOLVER_OK = ['yuro://', 'exp://', 'http://localhost:', 'http://localhost/'];
 
 async function conectar(uid: string, volver: string) {
   if (!VOLVER_OK.some((p) => volver.startsWith(p))) throw new Error('Destino de regreso no permitido');

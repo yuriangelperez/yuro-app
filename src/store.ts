@@ -78,6 +78,8 @@ interface State {
   guardar: (...ms: (Omit<Movimiento, 'id'> & { id?: string })[]) => Promise<void>;
   eliminar: (m: Movimiento) => Promise<void>;
   sincronizar: () => Promise<void>;
+  modoLocal: boolean; // entró con "Continuar sin cuenta": usa la app solo con los datos de este teléfono
+  setModoLocal: (v: boolean) => void;
   nubeUid: string | null; // cuenta de Supabase a la que está atado este teléfono (null = datos locales / Google Sheets)
   conectarNube: (opts: { subirLocal: boolean }) => Promise<void>;
   desconectarNube: () => void;
@@ -95,6 +97,8 @@ export const useFinanzas = create<State>()(
       pendientes: [],
       sincronizando: false,
       nubeUid: null,
+      modoLocal: false,
+      setModoLocal: (modoLocal) => set({ modoLocal }),
       error: null,
       ultimaSync: null,
       versionScript: null,
@@ -291,11 +295,13 @@ export const useFinanzas = create<State>()(
         aplicandoRemoto = false;
       },
 
-      desconectarNube: () =>
+      desconectarNube: () => {
+        clearTimeout(temporizador); // un cambio de ajustes pendiente de subir no debe correr después de vaciar el teléfono
         set({
           nubeUid: null, porAnio: {}, pendientes: [], recienGenerados: [], ultimaSync: null, presupuestos: {}, recurrentes: [], saldosIniciales: {}, ahorrosIniciales: {},
           metaAhorro: null, catExtra: { cat: [], cat2: [] }, catOcultas: { cat: [], cat2: ['YUSARI'] },
-        }),
+        });
+      },
 
       sincronizar: async () => {
         const { url, token, sincronizando } = get();
@@ -406,7 +412,7 @@ export const useFinanzas = create<State>()(
         return st as State;
       },
       partialize: (s) => ({
-        nubeUid: s.nubeUid, url: s.url, token: s.token, porAnio: s.porAnio, pendientes: s.pendientes, ultimaSync: s.ultimaSync, versionScript: s.versionScript,
+        nubeUid: s.nubeUid, modoLocal: s.modoLocal, url: s.url, token: s.token, porAnio: s.porAnio, pendientes: s.pendientes, ultimaSync: s.ultimaSync, versionScript: s.versionScript,
         presupuestos: s.presupuestos, recurrentes: s.recurrentes, recienGenerados: s.recienGenerados, saldosIniciales: s.saldosIniciales, ahorrosIniciales: s.ahorrosIniciales, metaAhorro: s.metaAhorro, tipsOcultos: s.tipsOcultos, catExtra: s.catExtra, catOcultas: s.catOcultas, monedaVista: s.monedaVista, fuenteUsd: s.fuenteUsd, cotizaciones: s.cotizaciones,
       }),
     },
@@ -427,6 +433,8 @@ useFinanzas.subscribe((s, previo) => {
   if ((Object.keys(a) as (keyof DatosNube)[]).every((k) => a[k] === b[k])) return;
   clearTimeout(temporizador);
   temporizador = setTimeout(() => {
+    // Si mientras tanto se cerró la sesión (el teléfono se vació), subir ajustes vacíos borraría los de la cuenta
+    if (!useFinanzas.getState().nubeUid) return;
     nube.subirAjustes(ajustesDe(useFinanzas.getState())).catch((e) => useFinanzas.setState({ error: `No se pudieron guardar los ajustes: ${e instanceof Error ? e.message : e}` }));
   }, 2000);
 });

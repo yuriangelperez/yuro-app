@@ -13,6 +13,8 @@ export const supabase = createClient(URL, PUBLISHABLE_KEY, {
     storage: AsyncStorage,
     autoRefreshToken: true,
     persistSession: true,
+    // Sin esto Supabase usa el flujo "implícito" y devuelve la sesión en #access_token, sin `code`: el login del celular no la leía.
+    flowType: 'pkce',
     detectSessionInUrl: Platform.OS === 'web', // en el celular el código se canjea a mano (ver auth.ts)
   },
 });

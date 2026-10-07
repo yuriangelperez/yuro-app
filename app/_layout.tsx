@@ -1,6 +1,6 @@
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { AppState, View } from 'react-native';
 import { useSesion } from '../src/auth';
 import { nube } from '../src/nube';
@@ -27,6 +27,12 @@ async function conectarCuenta(uid: string) {
 export default function Root() {
   const sesion = useSesion();
   const uid = sesion?.user.id;
+  // Se puede entrar con sesión o con "Continuar sin cuenta" (datos solo en este teléfono). La elección se guarda con el resto de los datos,
+  // así que hay que esperar a que se lean antes de decidir qué pantalla mostrar.
+  const modoLocal = useFinanzas((s) => s.modoLocal);
+  const [hidratado, setHidratado] = useState(useFinanzas.persist.hasHydrated());
+  useEffect(() => useFinanzas.persist.onFinishHydration(() => setHidratado(true)), []);
+  const acceso = !!sesion || modoLocal;
   useEffect(() => {
     if (!uid) return;
     const arrancar = () => conectarCuenta(uid).catch((e) => useFinanzas.setState({ error: e instanceof Error ? e.message : 'No se pudo conectar la cuenta' }));
@@ -50,15 +56,15 @@ export default function Root() {
     const fin = useFinanzas.persist.onFinishHydration(() => correr());
     return () => { sub.remove(); fin(); };
   }, []);
-  if (sesion === undefined) return <View style={{ flex: 1, backgroundColor: c.bg }} />; // leyendo la sesión guardada
+  if (sesion === undefined || !hidratado) return <View style={{ flex: 1, backgroundColor: c.bg }} />; // leyendo la sesión guardada
   return (
     <>
       <StatusBar style="light" />
       <Stack screenOptions={{ headerStyle: { backgroundColor: c.bg }, headerTintColor: c.text, contentStyle: { backgroundColor: c.bg } }}>
-        <Stack.Protected guard={!sesion}>
+        <Stack.Protected guard={!acceso}>
           <Stack.Screen name="login" options={{ headerShown: false }} />
         </Stack.Protected>
-        <Stack.Protected guard={!!sesion}>
+        <Stack.Protected guard={acceso}>
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen name="nuevo" options={{ presentation: 'modal', title: 'Movimiento' }} />
           <Stack.Screen name="presupuestos" options={{ title: 'Presupuestos' }} />
@@ -67,6 +73,10 @@ export default function Root() {
           <Stack.Screen name="recurrentes" options={{ title: 'Recurrentes' }} />
           <Stack.Screen name="recurrente" options={{ presentation: 'modal', title: 'Recurrente' }} />
         </Stack.Protected>
+        {/* Rutas de regreso de Google y Mercado Pago (deep links): siempre disponibles, solo redirigen.
+            Van al FINAL: cuando una ruta está protegida el router cae en la primera pantalla disponible, y esa tiene que ser el login o el inicio. */}
+        <Stack.Screen name="auth" options={{ headerShown: false }} />
+        <Stack.Screen name="mp" options={{ headerShown: false }} />
       </Stack>
     </>
   );

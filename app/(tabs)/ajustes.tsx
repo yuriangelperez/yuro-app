@@ -98,6 +98,7 @@ const Cuenta = () => {
         desconectarNube();
       }
       await salir();
+      useFinanzas.getState().setModoLocal(false); // al cerrar sesión se vuelve a pedir el login
     });
   };
   const ocupado = trabajando || sincronizando;
