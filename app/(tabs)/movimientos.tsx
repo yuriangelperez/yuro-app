@@ -12,6 +12,7 @@ const FILTROS: { label: string; tipo: Tipo | null; color: string }[] = [
   { label: '⬇️ Gastos', tipo: 'Egreso', color: c.gasto },
   { label: '⬆️ Ingresos', tipo: 'Ingreso', color: c.ingreso },
   { label: '🐷 Ahorro', tipo: 'Ahorro', color: c.ahorro },
+  { label: '↔️ Transferencias', tipo: 'Transferencia', color: '#5dade2' },
 ];
 
 type Rango = 'mes' | 'hoy' | '7' | '30' | 'custom';
@@ -62,7 +63,7 @@ export default function Movimientos() {
       .sort(masReciente);
     const porDia: Record<string, typeof lista> = {};
     for (const m of lista) (porDia[m.fecha] ??= []).push(m);
-    return Object.entries(porDia).map(([fecha, data]) => ({ fecha, data, total: data.reduce((a, m) => a + conv(m.valor, m.moneda), 0) }));
+    return Object.entries(porDia).map(([fecha, data]) => ({ fecha, data, total: data.reduce((a, m) => a + (m.tipo === 'Transferencia' ? 0 : conv(m.valor, m.moneda)), 0) }));
   }, [movimientos, tipo, q, moneda, vista, conv]);
 
   const totalFiltrado = secciones.reduce((a, x) => a + x.total, 0);

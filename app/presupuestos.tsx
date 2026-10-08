@@ -4,7 +4,7 @@ import { convertir, useCategorias, useFinanzas, useMovimientosMes } from '../src
 import { c, catInfo } from '../src/theme';
 import type { Moneda } from '../src/types';
 import { Barra, centrado, MAX_FORM, s, SelectorMoneda, Tip } from '../src/ui';
-import { etiquetaMes, money, parseMonto, pct } from '../src/util';
+import { etiquetaMes, money, parseMonto, pct, yaPaso } from '../src/util';
 
 // Una fila por categoría de gasto; el tope se guarda al escribir.
 const Fila = ({ cat, gastadoArs }: { cat: string; gastadoArs: number }) => {
@@ -58,7 +58,7 @@ export default function Presupuestos() {
   // Categorías de gasto conocidas + gastado este mes (en pesos, se convierte en cada fila)
   const { cats, gastado } = useMemo(() => {
     const g: Record<string, number> = {};
-    for (const m of movimientos) if (m.tipo === 'Egreso') g[m.categoria] = (g[m.categoria] ?? 0) - (convertir(m.valor, m.moneda, 'ARS', cot) ?? 0);
+    for (const m of movimientos) if (m.tipo === 'Egreso' && yaPaso(m)) g[m.categoria] = (g[m.categoria] ?? 0) - (convertir(m.valor, m.moneda, 'ARS', cot) ?? 0);
     // Tus categorías (sin las de ingreso/ahorro) + cualquiera con gastos este mes, aunque la hayas borrado
     const todas = [...new Set([...lista.filter((x) => !['Sueldo', 'Reserva', 'Ahorro'].includes(x)), ...Object.keys(g).filter(Boolean)])];
     return { cats: todas.sort((a, b) => (g[b] ?? 0) - (g[a] ?? 0)), gastado: g };

@@ -154,15 +154,23 @@ async function importarCsv(uid: string, texto: string, token: string, miId: numb
   }
   if (!nuevas.length) return 0;
 
-  // Si ya cargaste a mano ese mismo movimiento (misma fecha e importe), no se duplica.
+  // Si ya cargaste a mano ese mismo movimiento no se duplica: mismo importe, método Mercado Pago (o sin método) y misma fecha o un día
+  // de diferencia (el reporte a veces acredita al día siguiente). Cada manual cubre un solo movimiento del reporte.
+  // Los que llegaron por notificación sí pasan: el trigger yuro.mp_asociar los vincula al id de Mercado Pago en vez de crear otro.
+  const dia = 86400000;
   const fechas = nuevas.map((n) => n.fecha as string).sort();
-  const { data: previos } = await admin.from('movimientos').select('fecha,valor').eq('user_id', uid).neq('origen', 'mercadopago').gte('fecha', fechas[0]).lte('fecha', fechas[fechas.length - 1]);
-  const manuales = new Map<string, number>();
-  for (const p of previos ?? []) manuales.set(`${p.fecha}|${Number(p.valor)}`, (manuales.get(`${p.fecha}|${Number(p.valor)}`) ?? 0) + 1);
+  const desde = new Date(Date.parse(fechas[0]) - dia).toISOString().slice(0, 10);
+  const hasta = new Date(Date.parse(fechas[fechas.length - 1]) + dia).toISOString().slice(0, 10);
+  const { data: previos } = await admin.from('movimientos').select('fecha,valor,metodo').eq('user_id', uid).not('origen', 'in', '(mercadopago,notificacion)').gte('fecha', desde).lte('fecha', hasta);
+  const manuales = (previos ?? [])
+    .filter((p) => !String(p.metodo ?? '').trim() || /mercado/i.test(String(p.metodo)))
+    .map((p) => ({ fecha: p.fecha as string, valor: Number(p.valor), usado: false }));
   const aInsertar = nuevas.filter((n) => {
-    const k = `${n.fecha}|${n.valor}`;
-    const q = manuales.get(k) ?? 0;
-    if (q > 0) { manuales.set(k, q - 1); return false; }
+    const t = Date.parse(n.fecha as string);
+    // primero el del mismo día; si no, el de un día antes o después
+    const m = manuales.find((x) => !x.usado && x.valor === n.valor && x.fecha === n.fecha)
+      ?? manuales.find((x) => !x.usado && x.valor === n.valor && Math.abs(Date.parse(x.fecha) - t) <= dia);
+    if (m) { m.usado = true; return false; }
     return true;
   });
 

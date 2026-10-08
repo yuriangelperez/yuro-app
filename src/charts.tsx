@@ -1,5 +1,6 @@
+import { useState } from 'react';
 import { Platform, Pressable, Text, View } from 'react-native';
-import Svg, { Circle } from 'react-native-svg';
+import Svg, { Circle, Line, Path } from 'react-native-svg';
 import { c } from './theme';
 import type { Moneda } from './types';
 import { tap } from './ui';
@@ -81,6 +82,50 @@ export const BarrasMeses = ({ data, sel, onSel, moneda = 'ARS', alto = 150 }: { 
             </Pressable>
           );
         })}
+      </View>
+      <View style={{ flexDirection: 'row', marginTop: 4 }}>
+        {data.map((d) => (
+          <Text key={d.ym} style={{ flex: 1, textAlign: 'center', fontSize: 10, color: d.ym === sel ? c.text : c.muted, fontWeight: d.ym === sel ? '700' : '400' }}>
+            {MESES[+d.ym.slice(5) - 1].slice(0, 1)}
+          </Text>
+        ))}
+      </View>
+    </View>
+  );
+};
+
+export type PuntoLinea = { ym: string; total: number };
+
+// Línea de evolución por mes (ej. patrimonio). Tocar un mes lo selecciona. Si hay valores negativos marca el cero.
+export const LineaMeses = ({ data, sel, onSel, moneda = 'ARS', alto = 150 }: { data: PuntoLinea[]; sel: string; onSel: (ym: string) => void; moneda?: Moneda; alto?: number }) => {
+  const [ancho, setAncho] = useState(0);
+  const valores = data.map((d) => d.total);
+  const min = Math.min(0, ...valores);
+  const max = Math.max(0, ...valores);
+  const span = max - min || 1;
+  const x = (i: number) => ((i + 0.5) / data.length) * ancho; // cada punto en el centro de su columna
+  const y = (v: number) => 8 + (1 - (v - min) / span) * (alto - 16);
+  const trazo = data.map((d, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)} ${y(d.total).toFixed(1)}`).join(' ');
+  const area = data.length > 1 ? `${trazo} L${x(data.length - 1).toFixed(1)} ${y(0).toFixed(1)} L${x(0).toFixed(1)} ${y(0).toFixed(1)} Z` : '';
+  const activo = data.findIndex((d) => d.ym === sel);
+  return (
+    <View>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+        <Text style={{ color: c.muted, fontSize: 11 }}>{moneyCorto(max, moneda)}</Text>
+        {min < 0 && <Text style={{ color: c.muted, fontSize: 11 }}>{moneyCorto(min, moneda)}</Text>}
+      </View>
+      <View style={{ height: alto, borderBottomWidth: 1, borderBottomColor: c.border }} onLayout={(e) => setAncho(e.nativeEvent.layout.width)}>
+        {ancho > 0 && (
+          <Svg width={ancho} height={alto}>
+            {min < 0 && <Line x1={0} x2={ancho} y1={y(0)} y2={y(0)} stroke={c.border} strokeWidth={1} strokeDasharray="4 4" />}
+            {area ? <Path d={area} fill={c.ingreso} opacity={0.12} /> : null}
+            <Path d={trazo} stroke={c.ingreso} strokeWidth={2.5} fill="none" strokeLinejoin="round" strokeLinecap="round" />
+            {data.map((d, i) => <Circle key={d.ym} cx={x(i)} cy={y(d.total)} r={i === activo ? 6 : 3} fill={i === activo ? c.text : c.ingreso} />)}
+          </Svg>
+        )}
+        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, flexDirection: 'row' }}>
+          {data.map((d) => <Pressable key={d.ym} onPress={() => { tap(); onSel(d.ym); }} style={{ flex: 1 }} />)}
+        </View>
       </View>
       <View style={{ flexDirection: 'row', marginTop: 4 }}>
         {data.map((d) => (

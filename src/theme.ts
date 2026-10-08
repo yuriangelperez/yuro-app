@@ -33,6 +33,8 @@ const CAT_INFO: Record<string, Info> = {
   animales: { emoji: '🐾', color: '#a3cb38' },
   extra: { emoji: '✨', color: '#ff4fa3' },
   cambio: { emoji: '🔄', color: '#5dade2' },
+  transferencia: { emoji: '↔️', color: '#5dade2' },
+  deuda: { emoji: '🤝', color: '#af7ac5' },
   'sin categoria': { emoji: '❔', color: '#8a97a6' },
 };
 

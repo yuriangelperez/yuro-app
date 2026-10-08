@@ -1,13 +1,14 @@
 import * as XLSX from 'xlsx';
 import type { Moneda, Movimiento } from './types';
-import { parseMonto } from './util';
+import { buscarDuplicados } from './dedupe';
+import { norm, parseMonto } from './util';
 
 // Lee el extracto de un banco o billetera (Excel o CSV) y lo traduce a movimientos de la app.
 // Los bancos usan formatos distintos: se busca la fila de encabezados y se detectan las columnas por nombre.
 
 type Celda = string | number | boolean | Date | null | undefined;
 
-export const norm = (x: unknown) => String(x ?? '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim();
+export { norm };
 
 const CLAVES = {
   hora: ['hora', 'time'],
@@ -199,24 +200,8 @@ export const sugeridor = (historial: Movimiento[]) => {
 
 export type Duplicado = 'exacto' | 'probable' | null;
 
-// "exacto": misma fecha, importe y concepto. "probable": misma fecha e importe (el banco escribe el concepto distinto).
-export const detectarDuplicados = (nuevas: Fila[], existentes: Movimiento[], moneda: Moneda): Duplicado[] => {
-  const cuenta = (m: Map<string, number>, k: string) => m.set(k, (m.get(k) ?? 0) + 1);
-  const exactos = new Map<string, number>();
-  const probables = new Map<string, number>();
-  for (const e of existentes) {
-    if (e.moneda !== moneda) continue;
-    cuenta(exactos, `${e.fecha}|${e.valor}|${norm(e.concepto)}`);
-    cuenta(probables, `${e.fecha}|${e.valor}`);
-  }
-  const gastar = (m: Map<string, number>, k: string) => {
-    const n = m.get(k) ?? 0;
-    if (n > 0) m.set(k, n - 1);
-    return n > 0;
-  };
-  return nuevas.map((f) => {
-    const exacto = gastar(exactos, `${f.fecha}|${f.valor}|${norm(f.concepto)}`);
-    const probable = gastar(probables, `${f.fecha}|${f.valor}`);
-    return exacto ? 'exacto' : probable ? 'probable' : null;
-  });
-};
+// "exacto": misma operación (mismo importe y día, y concepto o cuenta parecidos). "probable": mismo día e importe, o un día
+// de diferencia con concepto parecido (el banco escribe el concepto distinto). La lógica vive en dedupe.ts.
+export const detectarDuplicados = (nuevas: Fila[], existentes: Movimiento[], moneda: Moneda): Duplicado[] =>
+  buscarDuplicados(nuevas.map((f) => ({ fecha: f.fecha, hora: f.hora, valor: f.valor, moneda, concepto: f.concepto })), existentes)
+    .map((c) => (!c ? null : c.exacto ? 'exacto' : 'probable'));

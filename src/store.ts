@@ -3,10 +3,17 @@ import { useMemo } from 'react';
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 import { type DatosNube, esUuid, nube, nuevoId, requiereSesion } from './nube';
+import { type Deuda, type ResumenDeuda, resumenDeuda } from './deudas';
+import { type ProveedorIA, type SugerenciaIA, URL_OLLAMA } from './ia';
+import { emparejar, type Planificado } from './planificados';
+import { aplicables, buscarRegla, type Regla } from './reglas';
+import { type EstadoReserva, estadosReservas, type Reserva } from './reservas';
+import { detectarTransferencias, type ParTransferencia } from './transferencias';
+import { type Cuenta, proveedorDe, tipoSugerido } from './proveedores';
 import { sheets } from './sheets';
 import { CATEGORIAS, CATEGORIAS2 } from './theme';
 import { MONEDAS, type Moneda, type Movimiento } from './types';
-import { diasDelMes, hoyYmd, mesActual, sumaMes } from './util';
+import { norm, diasDelMes, horaAhora, hoyYmd, mesActual, sumaMes, ymdMenos } from './util';
 
 // Las dos listas de categorías del formulario: "cat" (Categoría) y "cat2" (Categoría 2).
 export type Nivel = 'cat' | 'cat2';
@@ -60,10 +67,47 @@ interface State {
   monedaVista: Moneda; // en qué moneda se muestran los totales
   fuenteUsd: FuenteUsd;
   cotizaciones: Cotizaciones;
+  cotizHist: Record<string, { USD: number; USDT: number }>; // cotización de cada día en que la app la bajó (para valuar el patrimonio de meses pasados)
   saldosIniciales: Record<string, Partial<Record<Moneda, number>>>; // por año: lo que tenías el 1 de enero
   setSaldoInicial: (anio: string, m: Moneda, valor: number) => void;
   ahorrosIniciales: Record<string, Partial<Record<Moneda, number>>>; // por año: ajuste de lo ahorrado (ej. si usaste ahorros)
   setAhorroInicial: (anio: string, m: Moneda, valor: number) => void;
+  cuentas: Cuenta[]; // dónde está tu plata (banco, billetera, efectivo…); en la nube las comparte con todos tus dispositivos
+  planificados: Planificado[]; // movimientos esperados que todavía no ocurrieron (no entran en saldos ni estadísticas)
+  guardarPlanificado: (p: Omit<Planificado, 'id' | 'estado' | 'movimientoId'> & Partial<Pick<Planificado, 'id' | 'estado' | 'movimientoId'>>) => Promise<Planificado>;
+  borrarPlanificado: (id: string) => Promise<void>;
+  cumplirPlanificado: (id: string) => Promise<void>; // "ya ocurrió": carga el movimiento hoy y lo vincula
+  conciliarPlanificados: () => Promise<void>;
+  deshacerCumplido: (id: string) => Promise<void>; // "todavía no se cumplió": borra el movimiento y el planificado vuelve a pendiente // vincula solo los que ya llegaron (notificación, Mercado Pago, extracto, a mano)
+  transferenciasDescartadas: string[]; // pares que dijiste "no es una transferencia" (solo en este dispositivo)
+  descartarTransferencia: (clave: string) => void;
+  convertirEnTransferencia: (par: ParTransferencia) => Promise<void>; // reemplaza el gasto y el ingreso por una sola transferencia
+  deudas: Deuda[]; // lo que debés y lo que te deben
+  // Crea o edita una deuda. Al crear, `movimiento` registra también la plata que entró (te prestaron) o salió (prestaste).
+  guardarDeuda: (d: Omit<Deuda, 'id' | 'activa'> & { id?: string; activa?: boolean }, movimiento?: { metodo: string }) => Promise<Deuda>;
+  borrarDeuda: (id: string) => Promise<void>;
+  pagarDeuda: (id: string, p: { monto: number; fecha: string; metodo: string }) => Promise<void>;
+  iaActiva: boolean; // el asistente de IA es opcional y empieza apagado
+  setIaActiva: (v: boolean) => void;
+  iaProveedor: ProveedorIA; // 'ollama' (tu compu) o 'gemini' (Google AI Studio, gratis)
+  setIaProveedor: (p: ProveedorIA) => void;
+  iaUrl: string; // dónde corre tu Ollama
+  iaModelo: string;
+  setIaConfig: (url: string, modelo: string) => void;
+  sugerenciasIA: SugerenciaIA[];
+  iaVistos: string[]; // movimientos que ya se mandaron a revisar (no se repiten)
+  setSugerenciasIA: (s: SugerenciaIA[], vistos: string[]) => void;
+  descartarSugerenciaIA: (id: string) => void;
+  aplicarSugerenciaIA: (s: SugerenciaIA) => Promise<'ok' | 'sin-cuentas'>;
+  reservas: Reserva[]; // plata apartada dentro de una cuenta para un fin (no cambia el saldo)
+  guardarReserva: (r: Omit<Reserva, 'id' | 'activa' | 'desde'> & { id?: string; activa?: boolean; desde?: string }) => Promise<Reserva>;
+  borrarReserva: (id: string) => Promise<void>;
+  reglas: Regla[]; // "si el concepto tiene X, es categoría Y"
+  guardarRegla: (patron: string, categoria: string, categoria2?: string) => Promise<void>;
+  borrarRegla: (id: string) => Promise<void>;
+  aplicarReglas: () => Promise<number>; // clasifica los movimientos recientes sin categoría que alguna regla reconoce
+  completarCuentas: () => Promise<void>;
+  guardarCuenta: (c: Omit<Cuenta, 'id' | 'activa'> & { id?: string; activa?: boolean }) => Promise<Cuenta>;
   metaAhorro: { nombre: string; monto: number; moneda: Moneda } | null;
   setMetaAhorro: (meta: { nombre: string; monto: number; moneda: Moneda } | null) => void;
   setPresupuesto: (categoria: string, p: Presupuesto | null) => void;
@@ -87,6 +131,53 @@ interface State {
 
 const anioDe = (fecha: string) => +fecha.slice(0, 4);
 
+// Cuentas, planificados, deudas y reservas son extras: si todavía no corriste su migración en Supabase (la tabla no existe)
+// la sincronización de los movimientos no tiene que fallar por eso. Se conserva lo que ya había.
+const opcional = async <T>(que: string, cargar: () => Promise<T>, previo: T): Promise<T> => {
+  try {
+    return await cargar();
+  } catch (e) {
+    console.warn(`No se pudo bajar ${que}: ${e instanceof Error ? e.message : e}`);
+    return previo;
+  }
+};
+
+// Movimiento de una deuda (el préstamo o un pago): mueve plata pero no es ingreso ni gasto
+const movDeuda = (d: Deuda, tipo: 'Deuda' | 'Pago deuda', signo: 1 | -1, monto: number, fecha: string, metodo: string, concepto: string): Omit<Movimiento, 'id'> => {
+  const ars = convertir(signo * monto, d.moneda, 'ARS', useFinanzas.getState().cotizaciones);
+  return {
+    fecha, hora: fecha === hoyYmd() ? horaAhora() : null, concepto, valor: signo * monto, moneda: d.moneda, valorArs: ars === null ? null : Math.round(ars * 100) / 100,
+    tipo, metodo, categoria: '', categoria2: '', cuotasCumplidas: null, cuotasTotales: null, deudaId: d.id,
+  };
+};
+
+// Cuenta de un movimiento: la que trae, o la que se llama como su "método". Si no existe se crea acá, salvo en la nube,
+// donde la crea la base al guardar el movimiento (evita que dos dispositivos creen la misma cuenta a la vez).
+const cuentaDe = async (m: Movimiento): Promise<string | null> => {
+  if (m.cuentaId) return m.cuentaId;
+  const nombre = m.metodo.trim();
+  if (!nombre) return null;
+  const { cuentas, nubeUid, guardarCuenta } = useFinanzas.getState();
+  const existente = cuentas.find((x) => x.nombre.toLowerCase() === nombre.toLowerCase());
+  if (existente) return existente.id;
+  if (nubeUid) return null;
+  const p = proveedorDe(nombre);
+  return (await guardarCuenta({ nombre, proveedorId: p?.id ?? null, tipo: tipoSugerido(nombre), moneda: m.moneda, saldoInicial: 0 })).id;
+};
+
+// Lo que vive en tablas aparte de los movimientos. Cada una se baja por separado y, si falla, conserva lo anterior.
+const bajarExtras = async () => {
+  const s = useFinanzas.getState();
+  const [cuentas, planificados, deudas, reservas, reglas] = await Promise.all([
+    opcional('las cuentas', () => nube.listarCuentas(), s.cuentas),
+    opcional('los planificados', () => nube.listarPlanificados(), s.planificados),
+    opcional('las deudas', () => nube.listarDeudas(), s.deudas),
+    opcional('las reservas', () => nube.listarReservas(), s.reservas),
+    opcional('las reglas', () => nube.listarReglas(), s.reglas),
+  ]);
+  return { cuentas, planificados, deudas, reservas, reglas };
+};
+
 export const useFinanzas = create<State>()(
   persist(
     (set, get) => ({
@@ -105,6 +196,180 @@ export const useFinanzas = create<State>()(
       presupuestos: {},
       saldosIniciales: {},
       ahorrosIniciales: {},
+      cuentas: [],
+      planificados: [],
+      deudas: [],
+      reglas: [],
+      guardarRegla: async (patron, categoria, categoria2 = '') => {
+        const p = patron.trim();
+        if (!p || !categoria) return;
+        const previa = get().reglas.find((r) => norm(r.patron) === norm(p));
+        const regla: Regla = { id: previa?.id ?? nuevoId(), patron: p, categoria, categoria2 };
+        set((s) => ({ reglas: previa ? s.reglas.map((r) => (r.id === regla.id ? regla : r)) : [...s.reglas, regla] }));
+        if (get().nubeUid) await nube.guardarRegla(regla).catch((e) => set({ error: `No se pudo guardar la regla: ${e instanceof Error ? e.message : e}` }));
+      },
+      borrarRegla: async (id) => {
+        set((s) => ({ reglas: s.reglas.filter((r) => r.id !== id) }));
+        if (get().nubeUid) await nube.borrarRegla(id).catch((e) => set({ error: `No se pudo borrar la regla: ${e instanceof Error ? e.message : e}` }));
+      },
+      aplicarReglas: async () => {
+        const { reglas, porAnio } = get();
+        if (!reglas.length) return 0;
+        const hallados = aplicables(reglas, Object.values(porAnio).flat(), ymdMenos(90), hoyYmd());
+        if (hallados.length) await get().guardar(...hallados.map(({ m, regla }) => ({ ...m, categoria: regla.categoria, categoria2: m.categoria2 || regla.categoria2 })));
+        return hallados.length;
+      },
+      reservas: [],
+      guardarReserva: async (r) => {
+        const previa = r.id ? get().reservas.find((x) => x.id === r.id) : undefined;
+        const reserva: Reserva = { ...r, id: r.id ?? nuevoId(), activa: r.activa ?? previa?.activa ?? true, desde: r.desde ?? previa?.desde ?? hoyYmd() };
+        set((s) => ({ reservas: previa ? s.reservas.map((x) => (x.id === reserva.id ? reserva : x)) : [...s.reservas, reserva] }));
+        if (get().nubeUid) await nube.guardarReserva(reserva).catch((e) => set({ error: `No se pudo guardar la reserva: ${e instanceof Error ? e.message : e}` }));
+        return reserva;
+      },
+      borrarReserva: async (id) => {
+        set((s) => ({ reservas: s.reservas.filter((x) => x.id !== id) }));
+        if (get().nubeUid) await nube.borrarReserva(id).catch((e) => set({ error: `No se pudo borrar la reserva: ${e instanceof Error ? e.message : e}` }));
+      },
+      iaActiva: false,
+      setIaActiva: (iaActiva) => set({ iaActiva }),
+      iaProveedor: 'ollama',
+      setIaProveedor: (iaProveedor) => set({ iaProveedor }),
+      iaUrl: URL_OLLAMA,
+      iaModelo: '',
+      setIaConfig: (iaUrl, iaModelo) => set({ iaUrl: iaUrl.trim(), iaModelo: iaModelo.trim() }),
+      sugerenciasIA: [],
+      iaVistos: [],
+      setSugerenciasIA: (nuevas, vistos) => set((s) => ({ sugerenciasIA: [...s.sugerenciasIA.filter((x) => !nuevas.some((n) => n.id === x.id)), ...nuevas], iaVistos: [...new Set([...s.iaVistos, ...vistos])].slice(-2000) })),
+      descartarSugerenciaIA: (id) => set((s) => ({ sugerenciasIA: s.sugerenciasIA.filter((x) => x.id !== id) })),
+      aplicarSugerenciaIA: async (sug) => {
+        const m = Object.values(get().porAnio).flat().find((x) => x.id === sug.id);
+        set((s) => ({ sugerenciasIA: s.sugerenciasIA.filter((x) => x.id !== sug.id) }));
+        if (!m) return 'ok';
+        const conHoja = !!get().url && !get().nubeUid; // la hoja de Google no tiene tipo Transferencia: ahí solo se aplica la categoría
+        // Transferencia entre cuentas propias: el movimiento pasa a ser una transferencia (no ingreso ni gasto)
+        if (sug.tipo === 'Transferencia' && sug.cuentaContraria && !conHoja) {
+          const { cuentas } = get();
+          const contraria = cuentas.find((x) => x.nombre.toLowerCase() === sug.cuentaContraria.trim().toLowerCase());
+          const propia = cuentas.find((x) => x.id === m.cuentaId) ?? cuentas.find((x) => x.nombre.toLowerCase() === m.metodo.trim().toLowerCase());
+          if (!contraria || !propia || contraria.id === propia.id) return 'sin-cuentas';
+          const [origen, destino] = m.valor < 0 ? [propia, contraria] : [contraria, propia];
+          await get().guardar({ ...m, tipo: 'Transferencia', valor: Math.abs(m.valor), valorArs: m.valorArs == null ? null : Math.abs(m.valorArs), cuentaId: origen.id, cuentaDestinoId: destino.id, metodo: origen.nombre, categoria: '', categoria2: '' });
+          return 'ok';
+        }
+        if (sug.categoria) {
+          get().agregarCategoria('cat', sug.categoria); // si es nueva queda disponible para el resto
+          await get().guardar({ ...m, categoria: sug.categoria });
+        }
+        return 'ok';
+      },
+      guardarDeuda: async (d, movimiento) => {
+        const previa = d.id ? get().deudas.find((x) => x.id === d.id) : undefined;
+        const deuda: Deuda = { ...d, id: d.id ?? nuevoId(), activa: d.activa ?? previa?.activa ?? true };
+        set((s) => ({ deudas: previa ? s.deudas.map((x) => (x.id === deuda.id ? deuda : x)) : [...s.deudas, deuda] }));
+        // En la nube la deuda tiene que existir antes que los movimientos que la referencian
+        if (get().nubeUid) await nube.guardarDeuda(deuda).catch((e) => set({ error: `No se pudo guardar la deuda: ${e instanceof Error ? e.message : e}` }));
+        if (movimiento && !previa) {
+          const debo = deuda.direccion === 'debo';
+          await get().guardar(movDeuda(deuda, 'Deuda', debo ? 1 : -1, deuda.monto, deuda.fecha, movimiento.metodo, debo ? `Préstamo de ${deuda.nombre}` : `Préstamo a ${deuda.nombre}`));
+        }
+        return deuda;
+      },
+      borrarDeuda: async (id) => {
+        // Los movimientos de la deuda se conservan (quedan sueltos): la plata ya se movió
+        set((s) => ({ deudas: s.deudas.filter((x) => x.id !== id), porAnio: Object.fromEntries(Object.entries(s.porAnio).map(([a, l]) => [a, l.map((m) => (m.deudaId === id ? { ...m, deudaId: null } : m))])) }));
+        if (get().nubeUid) await nube.borrarDeuda(id).catch((e) => set({ error: `No se pudo borrar la deuda: ${e instanceof Error ? e.message : e}` }));
+      },
+      pagarDeuda: async (id, { monto, fecha, metodo }) => {
+        const d = get().deudas.find((x) => x.id === id);
+        if (!d) return;
+        const debo = d.direccion === 'debo';
+        await get().guardar(movDeuda(d, 'Pago deuda', debo ? -1 : 1, monto, fecha, metodo, debo ? `Pago a ${d.nombre}` : `Cobro de ${d.nombre}`));
+      },
+      transferenciasDescartadas: [],
+      descartarTransferencia: (clave) => set((s) => ({ transferenciasDescartadas: [...s.transferenciasDescartadas, clave] })),
+      convertirEnTransferencia: async ({ egreso: e, ingreso: i, comision }) => {
+        if (get().url && !get().nubeUid) return; // la hoja de Google no tiene tipo Transferencia
+        const nombre = (id?: string | null) => get().cuentas.find((x) => x.id === id)?.nombre ?? '?';
+        await get().eliminar(e);
+        await get().eliminar(i);
+        await get().guardar({
+          fecha: e.fecha, hora: e.hora ?? i.hora ?? null, concepto: `Transferencia ${nombre(e.cuentaId)} → ${nombre(i.cuentaId)}`, valor: i.valor, moneda: e.moneda,
+          valorArs: i.valorArs ?? null, tipo: 'Transferencia', metodo: nombre(e.cuentaId), categoria: '', categoria2: '', cuotasCumplidas: null, cuotasTotales: null,
+          cuentaId: e.cuentaId, cuentaDestinoId: i.cuentaId,
+        });
+        // Lo que se quedó el banco en el camino sí es un gasto: queda registrado aparte
+        if (comision > 0) {
+          await get().guardar({
+            fecha: e.fecha, hora: e.hora ?? null, concepto: `Comisión transferencia ${nombre(e.cuentaId)} → ${nombre(i.cuentaId)}`, valor: -comision, moneda: e.moneda,
+            valorArs: e.valorArs == null || !e.valor ? null : Math.round(-comision * (e.valorArs / e.valor) * 100) / 100, tipo: 'Egreso', metodo: nombre(e.cuentaId),
+            categoria: '', categoria2: '', cuotasCumplidas: null, cuotasTotales: null, cuentaId: e.cuentaId,
+          });
+        }
+      },
+      guardarPlanificado: async (p) => {
+        const plan: Planificado = { estado: 'pendiente', movimientoId: null, ...p, id: p.id ?? nuevoId() };
+        set((s) => ({ planificados: s.planificados.some((x) => x.id === plan.id) ? s.planificados.map((x) => (x.id === plan.id ? plan : x)) : [...s.planificados, plan] }));
+        if (get().nubeUid) await nube.guardarPlanificado(plan).catch((e) => set({ error: `No se pudo guardar lo planificado: ${e instanceof Error ? e.message : e}` }));
+        return plan;
+      },
+      borrarPlanificado: async (id) => {
+        set((s) => ({ planificados: s.planificados.filter((x) => x.id !== id) }));
+        if (get().nubeUid) await nube.borrarPlanificado(id).catch((e) => set({ error: `No se pudo borrar: ${e instanceof Error ? e.message : e}` }));
+      },
+      cumplirPlanificado: async (id) => {
+        const p = get().planificados.find((x) => x.id === id);
+        if (!p || p.estado !== 'pendiente') return;
+        const { cotizaciones } = get();
+        const ars = convertir(p.valor, p.moneda, 'ARS', cotizaciones);
+        const movId = get().nubeUid ? nuevoId() : undefined;
+        await get().guardar({
+          id: movId, fecha: hoyYmd(), hora: null, concepto: p.concepto, valor: p.valor, moneda: p.moneda, tipo: p.tipo, metodo: p.metodo, categoria: p.categoria, categoria2: p.categoria2,
+          cuentaId: p.cuentaId, valorArs: ars === null ? null : Math.round(ars * 100) / 100, cuotasCumplidas: null, cuotasTotales: null,
+        });
+        // El movimiento recién creado es el más nuevo con ese concepto e importe
+        const mov = Object.values(get().porAnio).flat().filter((m) => m.concepto === p.concepto && m.valor === p.valor && m.moneda === p.moneda && m.fecha === hoyYmd()).sort((a, b) => (b.id === movId ? 1 : 0) - (a.id === movId ? 1 : 0))[0];
+        await get().guardarPlanificado({ ...p, estado: 'cumplido', movimientoId: mov && (!get().nubeUid || !get().pendientes.some((q) => q.kind === 'upsert' && q.m.id === mov.id)) ? mov.id : null });
+      },
+      deshacerCumplido: async (id) => {
+        const p = get().planificados.find((x) => x.id === id);
+        if (!p) return;
+        const mov = p.movimientoId ? Object.values(get().porAnio).flat().find((m) => m.id === p.movimientoId) : undefined;
+        if (mov) await get().eliminar(mov);
+        await get().guardarPlanificado({ ...p, estado: 'pendiente', movimientoId: null });
+      },
+      conciliarPlanificados: async () => {
+        const { planificados, porAnio, pendientes, nubeUid } = get();
+        const pend = planificados.filter((p) => p.estado === 'pendiente');
+        if (!pend.length) return;
+        const ocupados = new Set(planificados.map((p) => p.movimientoId).filter(Boolean));
+        // En la nube, un movimiento que todavía no se subió no puede enlazarse (el vínculo es una clave foránea)
+        const sinSubir = new Set(pendientes.flatMap((q) => (q.kind === 'upsert' ? [q.m.id] : [])));
+        const libres = Object.values(porAnio).flat().filter((m) => !ocupados.has(m.id) && m.fecha <= hoyYmd() && // uno con fecha futura todavía no cumplió nada
+           !(nubeUid && sinSubir.has(m.id)));
+        for (const { plan, mov } of emparejar(pend, libres)) await get().guardarPlanificado({ ...plan, estado: 'cumplido', movimientoId: mov.id });
+      },
+      // Modo sin nube: crea una cuenta por cada "método" que ya usaste (en la nube lo hace la migración / la base)
+      completarCuentas: async () => {
+        if (get().nubeUid) return;
+        const usados = new Map<string, Movimiento>();
+        for (const m of Object.values(get().porAnio).flat()) if (m.metodo.trim() && !usados.has(m.metodo.trim().toLowerCase())) usados.set(m.metodo.trim().toLowerCase(), m);
+        for (const m of usados.values()) await cuentaDe({ ...m, cuentaId: null });
+      },
+      // Crea o edita una cuenta. En la nube se sube ya, antes de que algún movimiento la use.
+      guardarCuenta: async (c) => {
+        const previa = c.id ? get().cuentas.find((x) => x.id === c.id) : undefined;
+        const cuenta: Cuenta = { ...c, id: c.id ?? nuevoId(), activa: c.activa ?? previa?.activa ?? true };
+        set((s) => ({ cuentas: previa ? s.cuentas.map((x) => (x.id === cuenta.id ? cuenta : x)) : [...s.cuentas, cuenta] }));
+        if (get().nubeUid) {
+          try {
+            await nube.guardarCuenta(cuenta);
+          } catch (e) {
+            set({ error: `No se pudo guardar la cuenta: ${e instanceof Error ? e.message : e}` });
+          }
+        }
+        return cuenta;
+      },
       metaAhorro: null,
       setMetaAhorro: (metaAhorro) => set({ metaAhorro }),
       tipsOcultos: [],
@@ -175,6 +440,7 @@ export const useFinanzas = create<State>()(
       monedaVista: 'ARS',
       fuenteUsd: 'blue',
       cotizaciones: { USD: 0, USDT: 0, fecha: null },
+      cotizHist: {},
 
       setPresupuesto: (categoria, p) =>
         set((s) => {
@@ -198,7 +464,11 @@ export const useFinanzas = create<State>()(
             return j.venta as number;
           };
           const [USD, USDT] = await Promise.all([venta(get().fuenteUsd), venta('cripto')]);
-          set({ cotizaciones: { USD, USDT, fecha: new Date().toISOString() } });
+          set((s) => ({
+            cotizaciones: { USD, USDT, fecha: new Date().toISOString() },
+            // Se guarda la de hoy (se pisa si se baja de nuevo); solo se conservan las últimas ~2 años
+            cotizHist: Object.fromEntries(Object.entries({ ...s.cotizHist, [hoyYmd()]: { USD, USDT } }).sort(([a], [b]) => a.localeCompare(b)).slice(-740)),
+          }));
         } catch {
           // sin internet: se usan las últimas guardadas
         }
@@ -218,7 +488,17 @@ export const useFinanzas = create<State>()(
       // Acepta varios movimientos (ej. las dos patas de un cambio de moneda).
       guardar: async (...inputs) => {
         for (const input of inputs) {
+          // El script de la hoja de Google solo conoce estos tipos: otro se escribiría y desaparecería al sincronizar
+          if (get().url && !get().nubeUid && !['Ingreso', 'Egreso', 'Ahorro', 'Cambio'].includes(input.tipo)) {
+            set({ error: `Con la hoja de Google conectada no se puede guardar un movimiento de tipo "${input.tipo}". Usá tu cuenta de Yuro.` });
+            continue;
+          }
           const m: Movimiento = { ...input, id: input.id ?? (get().nubeUid ? nuevoId() : `n-${Date.now()}${Math.random().toString(36).slice(2, 6)}`) };
+          m.cuentaId = await cuentaDe(m);
+          if (!m.categoria && (m.tipo === 'Ingreso' || m.tipo === 'Egreso')) {
+            const regla = buscarRegla(get().reglas, m.concepto);
+            if (regla) { m.categoria = regla.categoria; m.categoria2 = m.categoria2 || regla.categoria2; }
+          }
           const anio = anioDe(m.fecha);
           set((s) => {
             const lista = s.porAnio[anio] ?? [];
@@ -232,9 +512,14 @@ export const useFinanzas = create<State>()(
           });
         }
         await get().sincronizar();
+        await get().conciliarPlanificados();
       },
 
       eliminar: async (m) => {
+        // Si este movimiento había cumplido algo planificado, eso vuelve a quedar pendiente (lo esperado no ocurrió)
+        for (const p of get().planificados.filter((x) => x.movimientoId === m.id && x.estado === 'cumplido')) {
+          void get().guardarPlanificado({ ...p, estado: 'pendiente', movimientoId: null });
+        }
         const anio = anioDe(m.fecha);
         set((s) => {
           // Un "n-…" con su alta todavía en cola nunca llegó a la hoja: basta con descartarlo.
@@ -281,24 +566,33 @@ export const useFinanzas = create<State>()(
             conteo.set(base, k + 1);
             return { m, externalId: `mig|${base}|${k}` };
           });
-          await nube.importar(uid, movs);
+          const remap = await nube.guardarCuentas(uid, get().cuentas);
+          const planesLocales = get().planificados.map((p) => ({ ...p, id: esUuid(p.id) ? p.id : nuevoId(), cuentaId: p.cuentaId ? remap.get(p.cuentaId) ?? p.cuentaId : null, movimientoId: null }));
+          const reenlazar = (id?: string | null) => (id ? remap.get(id) ?? id : null);
+          await nube.importar(uid, movs.map(({ m, externalId }) => ({ m: { ...m, cuentaId: reenlazar(m.cuentaId), cuentaDestinoId: reenlazar(m.cuentaDestinoId) }, externalId })));
           set((s) => ({ recurrentes: s.recurrentes.map((r) => (esUuid(r.id) ? r : { ...r, id: nuevoId() })) }));
           await nube.subirAjustes(ajustesDe(get()));
+          await nube.guardarPlanificados(uid, planesLocales);
+          await nube.guardarDeudas(uid, get().deudas);
+          await nube.guardarReglas(uid, get().reglas);
+          await nube.guardarReservas(uid, get().reservas.map((r) => ({ ...r, cuentaId: r.cuentaId ? remap.get(r.cuentaId) ?? r.cuentaId : null })));
         }
         // Se baja todo de la nube: de acá en más los ids locales son los de la base.
         const todos = await nube.listar('1900-01-01', '2999-12-31');
         const nuevo: Record<string, Movimiento[]> = {};
         for (const m of todos) (nuevo[m.fecha.slice(0, 4)] ??= []).push(m);
         const ajustes = subirLocal ? null : await nube.bajarAjustes();
+        const extras = await bajarExtras();
+        const { cuentas, planificados, deudas, reservas, reglas } = extras;
         aplicandoRemoto = true;
-        set({ ...ajustes, nubeUid: uid, porAnio: nuevo, pendientes: [], error: null, ultimaSync: new Date().toISOString() });
+        set({ ...ajustes, cuentas, planificados, deudas, reservas, reglas, nubeUid: uid, porAnio: nuevo, pendientes: [], error: null, ultimaSync: new Date().toISOString() });
         aplicandoRemoto = false;
       },
 
       desconectarNube: () => {
         clearTimeout(temporizador); // un cambio de ajustes pendiente de subir no debe correr después de vaciar el teléfono
         set({
-          nubeUid: null, porAnio: {}, pendientes: [], recienGenerados: [], ultimaSync: null, presupuestos: {}, recurrentes: [], saldosIniciales: {}, ahorrosIniciales: {},
+          nubeUid: null, porAnio: {}, pendientes: [], recienGenerados: [], cuentas: [], planificados: [], deudas: [], reservas: [], reglas: [], sugerenciasIA: [], iaVistos: [], ultimaSync: null, presupuestos: {}, recurrentes: [], saldosIniciales: {}, ahorrosIniciales: {},
           metaAhorro: null, catExtra: { cat: [], cat2: [] }, catOcultas: { cat: [], cat2: ['YUSARI'] },
         });
       },
@@ -324,6 +618,7 @@ export const useFinanzas = create<State>()(
             }
             const anio = +get().mes.slice(0, 4);
             const bajados = await nube.listar(`${anio}-01-01`, `${anio}-12-31`);
+            set(await bajarExtras());
             set((s) => {
               // Lo que se cargó mientras se bajaba todavía no está en la nube: se mantiene a la vista hasta subirlo
               const enCola = s.pendientes.flatMap((p) => (p.kind === 'upsert' && p.anio === anio ? [p.m] : []));
@@ -413,7 +708,7 @@ export const useFinanzas = create<State>()(
       },
       partialize: (s) => ({
         nubeUid: s.nubeUid, modoLocal: s.modoLocal, url: s.url, token: s.token, porAnio: s.porAnio, pendientes: s.pendientes, ultimaSync: s.ultimaSync, versionScript: s.versionScript,
-        presupuestos: s.presupuestos, recurrentes: s.recurrentes, recienGenerados: s.recienGenerados, saldosIniciales: s.saldosIniciales, ahorrosIniciales: s.ahorrosIniciales, metaAhorro: s.metaAhorro, tipsOcultos: s.tipsOcultos, catExtra: s.catExtra, catOcultas: s.catOcultas, monedaVista: s.monedaVista, fuenteUsd: s.fuenteUsd, cotizaciones: s.cotizaciones,
+        presupuestos: s.presupuestos, recurrentes: s.recurrentes, recienGenerados: s.recienGenerados, saldosIniciales: s.saldosIniciales, ahorrosIniciales: s.ahorrosIniciales, cuentas: s.cuentas, planificados: s.planificados, deudas: s.deudas, reservas: s.reservas, reglas: s.reglas, iaActiva: s.iaActiva, iaProveedor: s.iaProveedor, iaUrl: s.iaUrl, iaModelo: s.iaModelo, sugerenciasIA: s.sugerenciasIA, iaVistos: s.iaVistos, transferenciasDescartadas: s.transferenciasDescartadas, metaAhorro: s.metaAhorro, tipsOcultos: s.tipsOcultos, catExtra: s.catExtra, catOcultas: s.catOcultas, monedaVista: s.monedaVista, fuenteUsd: s.fuenteUsd, cotizaciones: s.cotizaciones, cotizHist: s.cotizHist,
       }),
     },
   ),
@@ -497,6 +792,7 @@ type Ajustes = State['saldosIniciales'];
 // Los ajustes de cada año (iniciales / ahorros) se suman al saldo que venía del año anterior.
 export const saldosAl = (porAnio: Record<string, Movimiento[]>, iniciales: Ajustes, ahorros: Ajustes, ym: string): Saldo[] => {
   const anio = +ym.slice(0, 4);
+  const hoy = hoyYmd();
   const conDatos = Object.keys(porAnio).filter((a) => porAnio[a]?.length);
   const primero = Math.min(anio, ...[...conDatos, ...Object.keys(iniciales), ...Object.keys(ahorros)].map(Number));
   return MONEDAS.map((moneda) => {
@@ -505,7 +801,8 @@ export const saldosAl = (porAnio: Record<string, Movimiento[]>, iniciales: Ajust
     let usada = false;
     for (let a = primero; a <= anio; a++) {
       const hasta = a === anio ? ym : `${a}-12`;
-      const l = (porAnio[a] ?? []).filter((m) => m.moneda === moneda && m.fecha.slice(0, 7) <= hasta);
+      // Una transferencia entre cuentas propias no cambia cuánto tenés en total
+      const l = (porAnio[a] ?? []).filter((m) => m.moneda === moneda && m.fecha.slice(0, 7) <= hasta && m.fecha <= hoy && m.tipo !== 'Transferencia'); // lo programado para más adelante todavía no cuenta
       const inicial = iniciales[a]?.[moneda] ?? 0;
       const ahorroIni = ahorros[a]?.[moneda] ?? 0;
       const ahorroMov = -l.filter((m) => m.tipo === 'Ahorro').reduce((x, m) => x + m.valor, 0);
@@ -515,4 +812,185 @@ export const saldosAl = (porAnio: Record<string, Movimiento[]>, iniciales: Ajust
     }
     return { moneda, disponible: total - ahorrado, ahorrado, total, usada };
   });
+};
+
+export type SaldosCuenta = Partial<Record<Moneda, number>>;
+
+// Cuánta plata hay en cada cuenta (por moneda): saldo inicial + lo que entró − lo que salió. Una transferencia resta en el
+// origen y suma en el destino. Los movimientos sin cuenta no entran. Los ahorros se cuentan como plata que salió de la cuenta.
+export const saldosPorCuenta = (porAnio: Record<string, Movimiento[]>, cuentas: Cuenta[]): Map<string, SaldosCuenta> => {
+  const out = new Map<string, SaldosCuenta>();
+  const sumar = (id: string | null | undefined, moneda: Moneda, v: number) => {
+    if (!id) return;
+    const s = out.get(id) ?? {};
+    s[moneda] = Math.round(((s[moneda] ?? 0) + v) * 100) / 100;
+    out.set(id, s);
+  };
+  for (const c of cuentas) if (c.saldoInicial) sumar(c.id, c.moneda, c.saldoInicial);
+  const hoy = hoyYmd();
+  for (const m of Object.values(porAnio).flat()) {
+    if (m.fecha > hoy) continue; // lo programado para más adelante todavía no está en la cuenta
+    if (m.tipo === 'Transferencia') {
+      sumar(m.cuentaId, m.moneda, -Math.abs(m.valor));
+      sumar(m.cuentaDestinoId, m.moneda, Math.abs(m.valor));
+    } else sumar(m.cuentaId, m.moneda, m.valor);
+  }
+  return out;
+};
+
+// Gastos e ingresos de las últimas semanas que parecen una transferencia entre tus cuentas (para confirmar o descartar)
+export const useTransferenciasSugeridas = () => {
+  const porAnio = useFinanzas((s) => s.porAnio);
+  const descartadas = useFinanzas((s) => s.transferenciasDescartadas);
+  return useMemo(() => {
+    const desde = ymdMenos(180);
+    const recientes = Object.values(porAnio).flat().filter((m) => m.fecha >= desde);
+    return detectarTransferencias(recientes, new Set(descartadas));
+  }, [porAnio, descartadas]);
+};
+
+// Agenda del mes elegido: todo lo que todavía no pasó o ya se cumplió, venga de donde venga.
+//  - plan: un planificado cargado a mano
+//  - movimiento: un gasto/ingreso/ahorro con fecha futura (programado)
+//  - recurrente: una suscripción o movimiento que se repite todos los meses
+// Los pendientes de meses anteriores que no llegaron siguen a la vista solo en el mes actual.
+export type ItemAgenda = {
+  id: string; concepto: string; valor: number; moneda: Moneda; fecha: string; estado: 'pendiente' | 'cumplido';
+  origen: 'plan' | 'movimiento' | 'recurrente'; plan?: Planificado; movimiento?: Movimiento; recurrenteId?: string;
+};
+
+export const useAgenda = (): ItemAgenda[] => {
+  const mes = useFinanzas((s) => s.mes);
+  const planificados = useFinanzas((s) => s.planificados);
+  const recurrentes = useFinanzas((s) => s.recurrentes);
+  const delAnio = useFinanzas((s) => s.porAnio[mes.slice(0, 4)]);
+  return useMemo(() => {
+    const hoy = hoyYmd();
+    const delMes = (delAnio ?? []).filter((m) => m.fecha.startsWith(mes));
+    const lista: ItemAgenda[] = planificados
+      .filter((p) => (p.estado === 'cumplido' && p.fecha.startsWith(mes)) || (p.estado === 'pendiente' && (p.fecha.startsWith(mes) || (mes === mesActual() && p.fecha.slice(0, 7) < mes))))
+      .map((p) => ({ id: p.id, concepto: p.concepto, valor: p.valor, moneda: p.moneda, fecha: p.fecha, estado: p.estado as 'pendiente' | 'cumplido', origen: 'plan' as const, plan: p }));
+    for (const m of delMes) {
+      if (m.fecha > hoy && (m.tipo === 'Ingreso' || m.tipo === 'Egreso' || m.tipo === 'Ahorro')) {
+        lista.push({ id: m.id, concepto: m.concepto, valor: m.valor, moneda: m.moneda, fecha: m.fecha, estado: 'pendiente', origen: 'movimiento', movimiento: m });
+      }
+    }
+    const mismo = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+    for (const r of recurrentes) {
+      if (!r.activo || r.desde > mes) continue;
+      // Si ese mes ya hay un movimiento igual (cargado a mano) la recurrente no suma otro: si ya ocurrió figura cumplida; si es futuro ya está como programado
+      const real = delMes.find((m) => m.tipo === r.tipo && mismo(m.concepto, r.concepto));
+      if (real && real.fecha > hoy) continue;
+      const cargado = !!real || (!!r.ultimoYm && r.ultimoYm >= mes);
+      if (!cargado && lista.some((i) => i.estado === 'pendiente' && mismo(i.concepto, r.concepto))) continue; // ya está como planificado: no se cuenta dos veces
+      lista.push({
+        id: `rec-${r.id}`, concepto: r.concepto, valor: r.valor, moneda: r.moneda, estado: cargado ? 'cumplido' : 'pendiente', origen: 'recurrente', recurrenteId: r.id,
+        fecha: `${mes}-${String(Math.min(r.dia, diasDelMes(mes))).padStart(2, '0')}`,
+      });
+    }
+    return lista.sort((a, b) => a.fecha.localeCompare(b.fecha));
+  }, [planificados, recurrentes, delAnio, mes]);
+};
+
+// Cada deuda con lo pagado y lo que falta (los pagos salen de los movimientos cargados)
+export const useResumenDeudas = (): ResumenDeuda[] => {
+  const deudas = useFinanzas((s) => s.deudas);
+  const porAnio = useFinanzas((s) => s.porAnio);
+  return useMemo(() => {
+    const movs = Object.values(porAnio).flat().filter((m) => m.deudaId);
+    return deudas.map((d) => resumenDeuda(d, movs));
+  }, [deudas, porAnio]);
+};
+
+// ───────── Patrimonio ─────────
+// Patrimonio = todo lo que tenés (dinero en todas tus monedas, ahorros incluidos) + lo que te deben − lo que debés.
+// Se valúa en la moneda de vista con la cotización de cada mes cuando la app la tiene guardada (se guarda una por día en que
+// se actualiza); los meses anteriores a eso usan la de hoy.
+export type PuntoPatrimonio = { ym: string; efectivo: number; cobrar: number; deber: number; total: number };
+
+export const usePatrimonio = (meses: number): PuntoPatrimonio[] => {
+  const porAnio = useFinanzas((s) => s.porAnio);
+  const iniciales = useFinanzas((s) => s.saldosIniciales);
+  const ahorros = useFinanzas((s) => s.ahorrosIniciales);
+  const deudas = useFinanzas((s) => s.deudas);
+  const cot = useFinanzas((s) => s.cotizaciones);
+  const hist = useFinanzas((s) => s.cotizHist);
+  const vista = useFinanzas((s) => s.monedaVista);
+  return useMemo(() => {
+    const fechasHist = Object.keys(hist).sort();
+    const pagos = Object.values(porAnio).flat().filter((m) => m.deudaId && m.tipo === 'Pago deuda');
+    const hoy = mesActual();
+    return Array.from({ length: meses }, (_, i) => {
+      const ym = sumaMes(hoy, i - (meses - 1));
+      const fin = `${ym}-${String(diasDelMes(ym)).padStart(2, '0')}`;
+      // Cotización de ese mes: la última guardada hasta fin de mes (si todavía no hay, la de hoy)
+      const f = [...fechasHist].reverse().find((d) => d <= fin);
+      const cotMes = f ? { ...hist[f], fecha: f } : cot;
+      const enVista = (v: number, m: Moneda) => convertir(v, m, vista, cotMes) ?? convertir(v, m, vista, cot) ?? 0;
+      const efectivo = saldosAl(porAnio, iniciales, ahorros, ym).reduce((a, x) => a + enVista(x.total, x.moneda), 0);
+      let cobrar = 0;
+      let deber = 0;
+      for (const d of deudas) {
+        if (d.fecha > fin) continue; // todavía no existía
+        const pagado = pagos.filter((m) => m.deudaId === d.id && m.fecha <= fin).reduce((a, m) => a + Math.abs(m.valor), 0);
+        const pendiente = enVista(Math.max(0, d.monto - pagado), d.moneda);
+        if (d.direccion === 'me_deben') cobrar += pendiente;
+        else deber += pendiente;
+      }
+      return { ym, efectivo, cobrar, deber, total: efectivo + cobrar - deber };
+    });
+  }, [porAnio, iniciales, ahorros, deudas, cot, hist, vista, meses]);
+};
+
+// Cuánto queda de cada reserva según los gastos reales que la descuentan
+export const useReservas = (): EstadoReserva[] => {
+  const reservas = useFinanzas((s) => s.reservas);
+  const cuentas = useFinanzas((s) => s.cuentas);
+  const porAnio = useFinanzas((s) => s.porAnio);
+  return useMemo(() => estadosReservas(reservas, Object.values(porAnio).flat(), cuentas, hoyYmd()), [reservas, cuentas, porAnio]);
+};
+
+// ───────── Alertas ─────────
+// Lo que necesita atención hoy, en un solo lugar: presupuestos, reservas, deudas y planificados.
+export type Alerta = { id: string; nivel: 'rojo' | 'amarillo'; texto: string; ruta: '/presupuestos' | '/reservas' | '/deudas' | '/planificados' };
+
+export const useAlertas = (): Alerta[] => {
+  const presupuestos = useFinanzas((s) => s.presupuestos);
+  const planificados = useFinanzas((s) => s.planificados);
+  const porAnio = useFinanzas((s) => s.porAnio);
+  const cot = useFinanzas((s) => s.cotizaciones);
+  const reservas = useReservas();
+  const deudas = useResumenDeudas();
+  return useMemo(() => {
+    const out: Alerta[] = [];
+    const hoy = hoyYmd();
+    const ym = hoy.slice(0, 7);
+    // Presupuestos: lo gastado este mes (en pesos) contra el tope de cada categoría
+    const gastado: Record<string, number> = {};
+    for (const m of porAnio[ym.slice(0, 4)] ?? []) {
+      if (m.tipo === 'Egreso' && m.fecha.startsWith(ym) && m.fecha <= hoy) gastado[m.categoria] = (gastado[m.categoria] ?? 0) - (convertir(m.valor, m.moneda, 'ARS', cot) ?? 0);
+    }
+    for (const [cat, p] of Object.entries(presupuestos)) {
+      const tope = convertir(p.monto, p.moneda, 'ARS', cot) ?? 0;
+      const g = gastado[cat] ?? 0;
+      if (tope <= 0) continue;
+      if (g >= tope) out.push({ id: `pre-${cat}`, nivel: 'rojo', texto: `Te pasaste del presupuesto de ${cat}`, ruta: '/presupuestos' });
+      else if (g >= tope * 0.8) out.push({ id: `pre-${cat}`, nivel: 'amarillo', texto: `Vas por el ${Math.round((g / tope) * 100)}% del presupuesto de ${cat}`, ruta: '/presupuestos' });
+    }
+    for (const e of reservas) {
+      if (e.queda < 0) out.push({ id: `res-${e.reserva.id}`, nivel: 'rojo', texto: `Te pasaste de la reserva "${e.reserva.nombre}"`, ruta: '/reservas' });
+      else if (e.reserva.monto > 0 && e.queda <= e.reserva.monto * 0.2) out.push({ id: `res-${e.reserva.id}`, nivel: 'amarillo', texto: `A la reserva "${e.reserva.nombre}" le queda poco`, ruta: '/reservas' });
+    }
+    const en3 = new Date(Date.now() + 3 * 86400000);
+    const limite = `${en3.getFullYear()}-${String(en3.getMonth() + 1).padStart(2, '0')}-${String(en3.getDate()).padStart(2, '0')}`;
+    for (const r of deudas) {
+      if (!r.deuda.activa || r.saldada || !r.deuda.vencimiento) continue;
+      if (r.deuda.vencimiento < hoy) out.push({ id: `deu-${r.deuda.id}`, nivel: 'rojo', texto: `${r.deuda.direccion === 'debo' ? 'Venció tu deuda con' : 'Venció lo que te debe'} ${r.deuda.nombre}`, ruta: '/deudas' });
+      else if (r.deuda.vencimiento <= limite) out.push({ id: `deu-${r.deuda.id}`, nivel: 'amarillo', texto: `${r.deuda.direccion === 'debo' ? 'Vence pronto tu deuda con' : 'Vence pronto lo que te debe'} ${r.deuda.nombre}`, ruta: '/deudas' });
+    }
+    for (const p of planificados) {
+      if (p.estado === 'pendiente' && p.fecha < hoy) out.push({ id: `pla-${p.id}`, nivel: 'amarillo', texto: `Todavía no llegó: ${p.concepto}`, ruta: '/planificados' });
+    }
+    return out.sort((a, b) => Number(b.nivel === 'rojo') - Number(a.nivel === 'rojo'));
+  }, [presupuestos, planificados, porAnio, cot, reservas, deudas]);
 };

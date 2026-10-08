@@ -4,7 +4,7 @@ import { BarrasMeses, Dona, type Porcion } from '../../src/charts';
 import { useConversor, useFinanzas } from '../../src/store';
 import { c, catInfo, metInfo } from '../../src/theme';
 import { Barra, Card, Chip, Columnas, SelectorMoneda, Tip, Titulo, centrado, s } from '../../src/ui';
-import { MESES, etiquetaMes, money, pct } from '../../src/util';
+import { MESES, etiquetaMes, money, pct, yaPaso } from '../../src/util';
 
 const p2 = (n: number) => String(n).padStart(2, '0');
 
@@ -17,7 +17,7 @@ export default function Estadisticas() {
   const $ = (n: number) => money(n, vista);
 
   const d = useMemo(() => {
-    const lista = porAnio[anio] ?? [];
+    const lista = (porAnio[anio] ?? []).filter(yaPaso); // lo programado a futuro todavía no cuenta
     const meses = Array.from({ length: 12 }, (_, i) => ({ ym: `${anio}-${p2(i + 1)}`, ingresos: 0, gastos: 0, ahorro: 0 }));
     const cat: Record<string, number> = {};
     const catMes: Record<string, number> = {};

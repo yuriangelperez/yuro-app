@@ -5,16 +5,18 @@ import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { avisar, mensajeError } from '../src/alerta';
 import { detectarDuplicados, leerExtracto, type Lectura, norm, sugeridor } from '../src/importar';
 import { nube, nuevoId, requiereSesion } from '../src/nube';
+import { buscarRegla } from '../src/reglas';
+import { detectarTransferencias } from '../src/transferencias';
 import { convertir, useFinanzas } from '../src/store';
 import { c } from '../src/theme';
 import type { Moneda, Movimiento } from '../src/types';
 import { Card, centrado, Chip, MAX_FORM, s, SelectorMoneda, tap, Titulo } from '../src/ui';
-import { fechaCorta, money } from '../src/util';
+import { fechaCorta, money, ymdMenos } from '../src/util';
 
 const MOSTRAR = 300; // filas de la vista previa (se importan todas las marcadas, se vean o no)
 
 export default function Importar() {
-  const { porAnio, cotizaciones, nubeUid, guardar } = useFinanzas();
+  const { porAnio, cotizaciones, nubeUid, guardar, reglas, cuentas } = useFinanzas();
   const [archivo, setArchivo] = useState('');
   const [lectura, setLectura] = useState<Lectura | null>(null);
   const [moneda, setMoneda] = useState<Moneda>('ARS');
@@ -60,7 +62,8 @@ export default function Importar() {
       };
       const elegidas = filas.filter((_, i) => incluida(i));
       const movs: Movimiento[] = elegidas.map((f) => {
-        const sug = sugerir(f.concepto);
+        const regla = buscarRegla(reglas, f.concepto);
+        const sug = regla ? { categoria: regla.categoria, categoria2: regla.categoria2 } : sugerir(f.concepto);
         return {
           id: nuevoId(), fecha: f.fecha, hora: f.hora, concepto: f.concepto, valor: f.valor, tipo: f.valor > 0 ? 'Ingreso' : 'Egreso', metodo: metodo.trim(),
           categoria: sug?.categoria ?? '', categoria2: sug?.categoria2 ?? '', cuotasCumplidas: null, cuotasTotales: null, moneda, valorArs: ars(f.valor),
@@ -81,10 +84,16 @@ export default function Importar() {
           const lista = await nube.listar(`${anio}-01-01`, `${anio}-12-31`);
           useFinanzas.setState((st) => ({ porAnio: { ...st.porAnio, [anio]: lista } }));
         }
+        // La base crea sola la cuenta del método que escribiste: se baja para que los movimientos nuevos no apunten a una cuenta desconocida
+        await nube.listarCuentas().then((cuentas) => useFinanzas.setState({ cuentas })).catch(() => {});
+        await useFinanzas.getState().conciliarPlanificados();
       } else {
         await guardar(...movs.map(({ id: _, ...m }) => m));
       }
-      avisar(`Se importaron ${movs.length} movimientos.`);
+      // ¿Alguno de lo importado parece una transferencia entre tus cuentas? Se avisa para que no infle ingresos y gastos
+      const est = useFinanzas.getState();
+      const posibles = detectarTransferencias(Object.values(est.porAnio).flat().filter((m) => m.fecha >= ymdMenos(180)), new Set(est.transferenciasDescartadas)).length;
+      avisar(`Se importaron ${movs.length} movimientos.${posibles ? `\n\n↔️ ${posibles} parecen transferencias entre tus cuentas: revisalas en Mis cuentas para que no cuenten como ingresos y gastos.` : ''}`);
       router.back();
     } catch (e) {
       setError(mensajeError(e));
@@ -109,8 +118,14 @@ export default function Importar() {
             <Titulo t={archivo} sub={`${filas.length} movimientos leídos. ${lectura.columnas}`} />
             <Text style={s.h}>Moneda del extracto</Text>
             <View style={{ alignSelf: 'flex-start', marginBottom: 14 }}><SelectorMoneda valor={moneda} onChange={(m) => { setMoneda(m); setManual({}); }} /></View>
-            <Text style={s.h}>Método de pago</Text>
-            <TextInput style={input} placeholder="Ej. Banco Galicia, Mercado pago" placeholderTextColor={c.muted} value={metodo} onChangeText={setMetodo} />
+            <Text style={s.h}>¿De qué cuenta es el extracto?</Text>
+            {cuentas.some((x) => x.activa) && (
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 6 }}>
+                {cuentas.filter((x) => x.activa).map((x) => <Chip key={x.id} label={x.nombre} on={norm(metodo) === norm(x.nombre)} onPress={() => setMetodo(x.nombre)} />)}
+              </View>
+            )}
+            <TextInput style={input} placeholder="Elegí una cuenta o escribí una nueva (ej. Banco Galicia)" placeholderTextColor={c.muted} value={metodo} onChangeText={setMetodo} />
+            {(!metodo.trim() || norm(metodo) === 'banco') && <Text style={{ color: c.aviso, fontSize: 12, marginBottom: 10 }}>Poné el nombre real de la cuenta (no "Banco" a secas): así se detectan las transferencias entre tus cuentas y cada saldo queda separado.</Text>}
             {lectura.sinSigno && (
               <>
                 <Text style={s.h}>Los importes vienen sin signo. Son…</Text>

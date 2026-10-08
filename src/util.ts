@@ -72,3 +72,9 @@ export const parseMonto = (t: string) => {
   const n = parseFloat(x);
   return isNaN(n) ? null : n;
 };
+
+// Minúsculas, sin tildes y con espacios colapsados: para comparar textos escritos distinto
+export const norm = (x: unknown) => String(x ?? '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim();
+
+// Un movimiento con fecha futura todavía no ocurrió (ej. una suscripción cargada para el 28): no cuenta en totales ni estadísticas
+export const yaPaso = (m: { fecha: string }) => m.fecha <= hoyYmd();

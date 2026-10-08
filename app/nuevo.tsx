@@ -1,8 +1,11 @@
-import { router, useLocalSearchParams } from 'expo-router';
+import { Link, router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { avisar, confirmar } from '../src/alerta';
+import { emparejar } from '../src/planificados';
+import { emojiCuenta } from '../src/proveedores';
 import { convertir, useCategorias, useFinanzas } from '../src/store';
+import { nuevoId } from '../src/nube';
 import { METODOS, c, catInfo, metInfo } from '../src/theme';
 import type { Moneda, Movimiento, Tipo } from '../src/types';
 import { centrado, Chip, MAX_FORM, NuevaCategoria, SelectorMoneda, tap } from '../src/ui';
@@ -19,12 +22,18 @@ const TIPOS: { t: Tipo; label: string; color: string }[] = [
   { t: 'Ingreso', label: '⬆️ Ingreso', color: c.ingreso },
   { t: 'Ahorro', label: '🐷 Ahorro', color: c.ahorro },
   { t: 'Cambio', label: '🔄 Cambio', color: '#5dade2' },
+  { t: 'Transferencia', label: '↔️ Transf.', color: '#5dade2' },
+  { t: 'Deuda', label: '🤝 Deuda', color: '#af7ac5' }, // solo al editar un préstamo o un pago: se crean desde Deudas
+  { t: 'Pago deuda', label: '🤝 Pago deuda', color: '#af7ac5' },
 ];
 const AYUDA: Record<Tipo, string> = {
   Egreso: 'Plata que sale: compras, cuentas, cuotas.',
   Ingreso: 'Plata que entra: sueldo, ventas, devoluciones.',
   Ahorro: 'Plata que separás para no gastarla. Se descuenta de tu dinero libre.',
   Cambio: 'Compra o venta de moneda: entregás una moneda y recibís otra. No cuenta como gasto ni ingreso.',
+  Deuda: 'Plata que pediste o prestaste. No cuenta como ingreso ni gasto. Se maneja desde Deudas.',
+  'Pago deuda': 'Pago de una deuda (lo que pagás o te pagan). No cuenta como ingreso ni gasto.',
+  Transferencia: 'Plata que pasás de una cuenta tuya a otra (ej. Mercado Pago → Naranja X). No cuenta como gasto ni ingreso.',
 };
 
 // ---- Calculadora ----
@@ -90,7 +99,9 @@ const Monto = ({ expr, moneda, color, activo, onPress, titulo, nota }: { expr: s
 export default function Nuevo() {
   const { id, fecha: fechaParam } = useLocalSearchParams<{ id?: string; fecha?: string }>();
   const porAnio = useFinanzas((s) => s.porAnio);
-  const { guardar, eliminar, cotizaciones } = useFinanzas();
+  const { guardar, eliminar, cotizaciones, guardarPlanificado, borrarPlanificado } = useFinanzas();
+  const planificados = useFinanzas((st) => st.planificados);
+  const nubeUid = useFinanzas((st) => st.nubeUid);
   const todos = useMemo(() => Object.values(porAnio).flat(), [porAnio]);
   const previo = id ? (porAnio[(fechaParam ?? '').slice(0, 4)] ?? todos).find((m) => m.id === id) : undefined;
 
@@ -102,19 +113,30 @@ export default function Nuevo() {
   const [auto, setAuto] = useState<'a' | 'b' | null>(null); // en un cambio, el monto que se calcula solo con la cotización
   const [entradaArs, setEntradaArs] = useState<boolean | null>(null); // escribir el monto en pesos aunque la moneda sea USD/USDT
   const [desdePesos, setDesdePesos] = useState(true); // ahorro en USD/USDT pagado con pesos: registra también el cambio
+  // Planificado: al editar, si este movimiento cumple algo planificado; al crear, si es uno planificado
+  // ('nuevo' = todavía no ocurrió, se guarda como pendiente; un id = cumple ese planificado que ya tenías)
+  const planDePrevio = previo ? planificados.find((p) => p.movimientoId === previo.id) : undefined;
+  const [esPlan, setEsPlan] = useState(!!planDePrevio);
+  const [planSel, setPlanSel] = useState<string | null>(null);
+  const [planYaPaso, setPlanYaPaso] = useState(true); // al marcar uno ya cargado: ¿ya se cumplió o todavía no?
   const [repetir, setRepetir] = useState(false); // crear un recurrente con este movimiento
   const { recurrentes, guardarRecurrente } = useFinanzas();
   const yaRecurrente = previo && recurrentes.find((r) => r.tipo === previo.tipo && r.concepto.trim().toLowerCase() === previo.concepto.trim().toLowerCase());
   const [campo, setCampo] = useState<'a' | 'b' | null>(previo ? null : 'a'); // monto con el teclado abierto
   const [concepto, setConcepto] = useState(previo?.concepto ?? '');
   const [metodo, setMetodo] = useState(previo?.metodo ?? 'Efectivo');
+  const cuentas = useFinanzas((st) => st.cuentas);
+  const hojaConectada = useFinanzas((st) => !!st.url && !st.nubeUid); // la hoja de Google no tiene columnas para cuentas
+  const cuentasActivas = useMemo(() => cuentas.filter((x) => x.activa || x.id === previo?.cuentaId || x.id === previo?.cuentaDestinoId), [cuentas, previo]);
+  const [origenId, setOrigenId] = useState<string | null>(previo?.tipo === 'Transferencia' ? previo.cuentaId ?? null : null);
+  const [destinoId, setDestinoId] = useState<string | null>(previo?.tipo === 'Transferencia' ? previo.cuentaDestinoId ?? null : null);
   const [categoria, setCategoria] = useState(previo?.categoria ?? '');
   const [categoria2, setCategoria2] = useState(previo?.categoria2 ?? '');
   const [fecha, setFecha] = useState(previo?.fecha ?? hoyYmd());
   const [cumplidas, setCumplidas] = useState(previo?.cuotasCumplidas != null ? String(previo.cuotasCumplidas) : '');
   const [totales, setTotales] = useState(previo?.cuotasTotales != null ? String(previo.cuotasTotales) : '');
 
-  const metodos = useMemo(() => unir(METODOS, todos.map((m) => m.metodo)), [todos]);
+  const metodos = useMemo(() => unir(METODOS, [...cuentas.filter((x) => x.activa).map((x) => x.nombre), ...todos.map((m) => m.metodo)]), [todos, cuentas]);
   // La elegida se muestra aunque la hayas borrado de la lista (ej. al editar un movimiento viejo)
   const listaCat = useCategorias('cat');
   const listaCat2 = useCategorias('cat2');
@@ -132,7 +154,8 @@ export default function Nuevo() {
   const cambioDoble = tipo === 'Cambio' && !previo; // un cambio nuevo carga las dos monedas
   const sinTildes = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
   // Habilita las cuotas: método de crédito (con o sin tilde), categoría "Cuota" o un movimiento que ya tenía cuotas.
-  const credito = sinTildes(metodo).includes('credito') || sinTildes(categoria) === 'cuota' || !!previo?.cuotasTotales;
+  const esTransf = tipo === 'Transferencia';
+  const credito = !esTransf && sinTildes(metodo).includes('credito') || sinTildes(categoria) === 'cuota' || !!previo?.cuotasTotales;
   const input = { backgroundColor: c.card, color: c.text, borderRadius: 12, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: c.border } as const;
 
   // Sugerencias: conceptos que ya usaste (los más frecuentes, o los que coinciden con lo que escribís)
@@ -169,7 +192,9 @@ export default function Nuevo() {
   const enArs = moneda !== 'ARS' && !cambioDoble && (entradaArs ?? (tipo === 'Ahorro' && !previo));
   const convertido = enArs ? convertir(a, 'ARS', moneda, cotizaciones) : null;
   const ahorroConPesos = tipo === 'Ahorro' && moneda !== 'ARS' && !previo && desdePesos;
-  const puedeRepetir = tipo !== 'Cambio' && !ahorroConPesos && !(credito && totales) && !yaRecurrente;
+  const puedePlanificar = (tipo === 'Ingreso' || tipo === 'Egreso') && !cambioDoble;
+  const planesPendientes = useMemo(() => planificados.filter((p) => p.estado === 'pendiente' && p.tipo === tipo), [planificados, tipo]);
+  const puedeRepetir = tipo !== 'Cambio' && !esTransf && !ahorroConPesos && !(credito && totales) && !yaRecurrente;
   // Cotización implícita del cambio: cuántas unidades de la moneda "fuerte" por 1
   const tasa = cambioDoble && a > 0 && b > 0 && moneda !== moneda2
     ? moneda === 'ARS' ? `1 ${moneda2} = ${money(a / b)}` : moneda2 === 'ARS' ? `1 ${moneda} = ${money(b / a)}` : `1 ${moneda} = ${(b / a).toFixed(4).replace('.', ',')} ${moneda2}`
@@ -193,37 +218,90 @@ export default function Nuevo() {
     if (cambioDoble) {
       if (!(b > 0)) return avisar('Ingresá cuánto recibiste');
       if (moneda === moneda2) return avisar('Elegí dos monedas distintas');
-      const comun = { fecha, tipo: 'Cambio' as Tipo, metodo, categoria, categoria2, cuotasCumplidas: null, cuotasTotales: null };
+      // Un cambio de divisa mueve plata entre cuentas (ej. Mercado Pago en pesos → Binance en USDT): cada pata queda en su cuenta
+      const cuentaSale = cuentas.find((x) => x.id === origenId);
+      const cuentaEntra = cuentas.find((x) => x.id === destinoId);
+      if (cuentasActivas.length > 0 && !cuentaSale && !cuentaEntra) return avisar('Elegí de qué cuenta sale la plata y en cuál entra');
+      const pata = (cu?: typeof cuentaSale) => (cu ? { metodo: cu.nombre, cuentaId: cu.id } : { metodo });
+      const comun = { fecha, tipo: 'Cambio' as Tipo, categoria, categoria2, cuotasCumplidas: null, cuotasTotales: null };
       const nombre = concepto.trim() || `Cambio ${moneda} → ${moneda2}`;
       tap(true);
       setEnviado(true);
       // Con pesos de por medio se usa lo que realmente pagaste/recibiste, así en la hoja las dos filas se compensan.
       const arsA = moneda === 'ARS' ? -a : moneda2 === 'ARS' ? -b : enPesos(-a, moneda);
       const arsB = moneda2 === 'ARS' ? b : moneda === 'ARS' ? a : enPesos(b, moneda2);
-      guardar({ ...comun, concepto: nombre, valor: -a, moneda, valorArs: arsA }, { ...comun, concepto: nombre, valor: b, moneda: moneda2, valorArs: arsB });
+      guardar(
+        { ...comun, ...pata(cuentaSale ?? cuentaEntra), concepto: nombre, valor: -a, moneda, valorArs: arsA },
+        { ...comun, ...pata(cuentaEntra ?? cuentaSale), concepto: nombre, valor: b, moneda: moneda2, valorArs: arsB },
+      );
       return router.back();
     }
-    if (!concepto.trim()) return avisar('Ingresá un concepto');
+    const origen = cuentas.find((x) => x.id === origenId);
+    const destino = cuentas.find((x) => x.id === destinoId);
+    if (esTransf) {
+      if (!origen || !destino) return avisar('Elegí desde qué cuenta sale y a cuál llega');
+      if (origen.id === destino.id) return avisar('Las dos cuentas son la misma');
+    } else if (!concepto.trim()) return avisar('Ingresá un concepto');
     if (enArs && !convertido) return avisar(`Falta la cotización de ${moneda}: cargala en Ajustes o escribí el monto en ${moneda}`);
     // Como en tu hoja: ingresos en positivo; egresos y ahorros en negativo. "Cambio" conserva su signo.
-    const signo = tipo === 'Ingreso' ? 1 : tipo === 'Cambio' ? Math.sign(previo?.valor ?? -1) || -1 : -1;
+    const signo = tipo === 'Ingreso' || esTransf ? 1 : tipo === 'Cambio' || tipo === 'Deuda' || tipo === 'Pago deuda' ? Math.sign(previo?.valor ?? -1) || -1 : -1;
     const monto = Math.round((enArs ? convertido! : a) * 100) / 100; // en la moneda del movimiento
     const valor = signo * monto;
     const pesos = enArs ? signo * Math.round(a * 100) / 100 : enPesos(valor, moneda); // columna C de la hoja
     if (ahorroConPesos && pesos === null) return avisar(`Falta la cotización de ${moneda}: cargala en Ajustes`);
     tap(true);
     setEnviado(true);
+    // Uno ya cargado que todavía no se cumplió: deja de ser un movimiento y pasa a pendiente en Planificados
+    if (previo && puedePlanificar && esPlan && !planDePrevio && !planYaPaso) {
+      (async () => {
+        if (!(await confirmar('¿Pasar a pendiente?', `"${previo.concepto}" deja de contar en tus saldos y estadísticas hasta que ocurra. Lo vas a ver en Planificados.`, 'Pasar a pendiente'))) return setEnviado(false);
+        await eliminar(previo);
+        await guardarPlanificado({
+          fecha, concepto: concepto.trim(), valor, moneda, tipo: tipo as 'Ingreso' | 'Egreso', metodo, cuentaId: previo.cuentaId ?? null, categoria, categoria2,
+        });
+        router.back();
+      })();
+      return;
+    }
+    const planNuevo = !previo && puedePlanificar && esPlan && planSel === 'nuevo';
+    const planCumple = !previo && puedePlanificar && esPlan && planSel && planSel !== 'nuevo' ? planificados.find((p) => p.id === planSel) : undefined;
+    // Con un planificado elegido el id se define acá para poder vincularlo cuando el movimiento esté guardado
+    const idPropio = planCumple ? (nubeUid ? nuevoId() : `n-${Date.now()}${Math.random().toString(36).slice(2, 6)}`) : undefined;
     const mov = {
-      id: previo?.id, fecha, hora: previo?.hora ?? horaAhora(), concepto: concepto.trim(), valor, valorArs: pesos, tipo, metodo, categoria, categoria2, moneda,
+      id: previo?.id ?? idPropio, fecha, hora: previo?.hora ?? horaAhora(), valor, valorArs: pesos, tipo, moneda,
+      concepto: esTransf ? concepto.trim() || `Transferencia ${origen!.nombre} → ${destino!.nombre}` : concepto.trim(),
+      metodo: esTransf ? origen!.nombre : metodo, categoria: esTransf ? '' : categoria, categoria2: esTransf ? '' : categoria2,
+      // Si cambió el método, la cuenta se vuelve a buscar por nombre al guardar
+      cuentaId: esTransf ? origen!.id : metodo === previo?.metodo ? previo?.cuentaId ?? null : null,
+      cuentaDestinoId: esTransf ? destino!.id : null,
+      origen: previo?.origen, externalId: previo?.externalId, deudaId: previo?.deudaId ?? null,
       cuotasCumplidas: credito && cumplidas ? +cumplidas : null,
       cuotasTotales: credito && totales ? +totales : null,
     };
+    if (planNuevo) {
+      // Todavía no ocurrió: queda como pendiente en Planificados y no toca saldos ni estadísticas
+      guardarPlanificado({
+        fecha, concepto: mov.concepto, valor, moneda, tipo: tipo as 'Ingreso' | 'Egreso', metodo,
+        cuentaId: cuentas.find((x) => x.nombre.toLowerCase() === metodo.trim().toLowerCase())?.id ?? null, categoria, categoria2,
+      });
+      return router.back();
+    }
     if (ahorroConPesos) {
       // Los pesos salen de tu billetera en ARS y el ahorro queda en USD/USDT: cambio ARS → moneda + ahorro.
       const ars = Math.abs(pesos!);
       const cambio = { fecha, hora: mov.hora, tipo: 'Cambio' as Tipo, concepto: `Cambio ARS → ${moneda} (${concepto.trim()})`, metodo, categoria: '', categoria2, cuotasCumplidas: null, cuotasTotales: null };
       guardar({ ...cambio, valor: -ars, moneda: 'ARS', valorArs: -ars }, { ...cambio, valor: monto, moneda, valorArs: ars }, mov);
-    } else guardar(mov);
+    } else if (planCumple) guardar(mov).then(() => guardarPlanificado({ ...planCumple, estado: 'cumplido', movimientoId: idPropio! }));
+    else guardar(mov);
+    if (previo && puedePlanificar) {
+      if (esPlan && !planDePrevio) {
+        // Marcar uno ya cargado: cumple un planificado pendiente parecido o, si no hay, queda registrado como planificado cumplido
+        const actual = { ...previo, ...mov, id: previo.id } as Movimiento;
+        const par = emparejar(planificados.filter((p) => p.estado === 'pendiente'), [actual])[0];
+        if (par) guardarPlanificado({ ...par.plan, estado: 'cumplido', movimientoId: previo.id });
+        else guardarPlanificado({ fecha, concepto: mov.concepto, valor, moneda, tipo: tipo as 'Ingreso' | 'Egreso', metodo, cuentaId: previo.cuentaId ?? null, categoria, categoria2, estado: 'cumplido', movimientoId: previo.id });
+      } else if (!esPlan && planDePrevio) borrarPlanificado(planDePrevio.id);
+    }
     if (repetir && puedeRepetir) {
       // Este mes ya queda cargado con este movimiento; desde el próximo se carga solo el mismo día
       guardarRecurrente({
@@ -268,7 +346,7 @@ export default function Nuevo() {
     <ScrollView style={{ backgroundColor: c.bg }} contentContainerStyle={{ padding: 16, paddingBottom: 60, ...centrado(MAX_FORM) }} keyboardShouldPersistTaps="handled">
       {/* Tipo */}
       <View style={{ flexDirection: 'row', backgroundColor: c.card, borderRadius: 14, padding: 4, marginBottom: 6 }}>
-        {TIPOS.filter((x) => x.t !== 'Cambio' || !previo || previo.tipo === 'Cambio').map((x) => (
+        {TIPOS.filter((x) => (x.t !== 'Cambio' || !previo || previo.tipo === 'Cambio') && (x.t !== 'Transferencia' || !hojaConectada || previo?.tipo === 'Transferencia') && ((x.t !== 'Deuda' && x.t !== 'Pago deuda') || previo?.tipo === x.t)).map((x) => (
           <Pressable key={x.t} onPress={() => { tap(); setTipo(x.t); }} style={{ flex: 1, paddingVertical: 10, borderRadius: 10, alignItems: 'center', backgroundColor: tipo === x.t ? x.color : 'transparent' }}>
             <Text style={{ color: tipo === x.t ? '#fff' : c.muted, fontWeight: '700', fontSize: 13 }}>{x.label}</Text>
           </Pressable>
@@ -334,7 +412,7 @@ export default function Nuevo() {
       {/* Concepto + sugerencias */}
       <TextInput
         style={input}
-        placeholder={cambioDoble ? `Concepto (opcional) · Cambio ${moneda} → ${moneda2}` : 'Concepto (ej. Supermercado)'}
+        placeholder={cambioDoble ? `Concepto (opcional) · Cambio ${moneda} → ${moneda2}` : esTransf ? 'Concepto (opcional)' : 'Concepto (ej. Supermercado)'}
         placeholderTextColor={c.muted}
         value={concepto}
         onChangeText={setConcepto}
@@ -352,7 +430,7 @@ export default function Nuevo() {
       )}
 
       {/* Categoría */}
-      {!cambioDoble && (
+      {!cambioDoble && !esTransf && (
         <>
           <Etiqueta t="Categoría" />
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginHorizontal: -4, marginBottom: 6 }}>
@@ -376,10 +454,45 @@ export default function Nuevo() {
         </>
       )}
 
-      <Etiqueta t="Método" />
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 6 }}>
-        {metodos.map((x) => <Chip key={x} label={`${metInfo(x).emoji} ${x}`} on={metodo === x} onPress={() => setMetodo(x)} />)}
-      </ScrollView>
+      {esTransf ? (
+        cuentasActivas.length < 2 ? (
+          <Link href="/cuentas" asChild>
+            <Pressable style={{ backgroundColor: c.card, borderRadius: 14, padding: 12, marginTop: 6 }}>
+              <Text style={{ color: c.text }}>Necesitás al menos dos cuentas para transferir. <Text style={{ color: c.accent, fontWeight: '700' }}>Crear cuentas ›</Text></Text>
+            </Pressable>
+          </Link>
+        ) : (
+          <>
+            <Etiqueta t="Desde" />
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 6 }} keyboardShouldPersistTaps="handled">
+              {cuentasActivas.map((x) => <Chip key={x.id} label={`${emojiCuenta(x)} ${x.nombre}`} on={origenId === x.id} onPress={() => setOrigenId(x.id)} color="#5dade2" />)}
+            </ScrollView>
+            <Etiqueta t="Hacia" />
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 6 }} keyboardShouldPersistTaps="handled">
+              {cuentasActivas.filter((x) => x.id !== origenId).map((x) => <Chip key={x.id} label={`${emojiCuenta(x)} ${x.nombre}`} on={destinoId === x.id} onPress={() => setDestinoId(x.id)} color="#5dade2" />)}
+            </ScrollView>
+          </>
+        )
+      ) : cambioDoble && cuentasActivas.length > 0 ? (
+        <>
+          <Etiqueta t="Sale de (cuenta)" />
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 6 }} keyboardShouldPersistTaps="handled">
+            {cuentasActivas.map((x) => <Chip key={x.id} label={`${emojiCuenta(x)} ${x.nombre}`} on={origenId === x.id} onPress={() => setOrigenId(origenId === x.id ? null : x.id)} color="#5dade2" />)}
+          </ScrollView>
+          <Etiqueta t="Entra en (cuenta)" />
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 6 }} keyboardShouldPersistTaps="handled">
+            {cuentasActivas.map((x) => <Chip key={x.id} label={`${emojiCuenta(x)} ${x.nombre}`} on={destinoId === x.id} onPress={() => setDestinoId(destinoId === x.id ? null : x.id)} color="#5dade2" />)}
+          </ScrollView>
+          <Text style={{ color: c.muted, fontSize: 11, marginBottom: 6 }}>Si cambiás dentro de la misma cuenta (ej. una billetera con pesos y dólares), elegí la misma en las dos.</Text>
+        </>
+      ) : (
+        <>
+          <Etiqueta t="Método" />
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 6 }}>
+            {metodos.map((x) => <Chip key={x} label={`${metInfo(x).emoji} ${x}`} on={metodo === x} onPress={() => setMetodo(x)} />)}
+          </ScrollView>
+        </>
+      )}
 
       {credito && !cambioDoble && (
         <>
@@ -392,13 +505,53 @@ export default function Nuevo() {
         </>
       )}
 
-      <Etiqueta t="Categoría 2" />
-      <Grupo>
+      {!esTransf && <Etiqueta t="Categoría 2" />}
+      {!esTransf && <Grupo>
         {categorias2.map((x) => (
           <Chip key={x} label={x} on={categoria2 === x} onPress={() => setCategoria2(categoria2 === x ? '' : x)} onLongPress={() => onBorrarCategoria('cat2', x)} />
         ))}
         <NuevaCategoria nivel="cat2" onCreada={setCategoria2} />
-      </Grupo>
+      </Grupo>}
+
+      {puedePlanificar && (
+        <View style={{ backgroundColor: esPlan ? '#5dade222' : c.card, borderWidth: 1, borderColor: esPlan ? '#5dade2' : c.border, borderRadius: 14, padding: 12, marginTop: 6 }}>
+          <Pressable
+            onPress={() => {
+              tap();
+              const on = !esPlan;
+              setEsPlan(on);
+              // Al crear: si es a futuro, lo normal es dejarlo pendiente; si no, cumplir el planificado pendiente que más se le parece
+              if (on && !previo) setPlanSel(fecha > hoyYmd() || !planesPendientes.length ? 'nuevo' : planesPendientes[0].id);
+            }}
+            style={{ flexDirection: 'row', alignItems: 'center' }}
+          >
+            <Text style={{ fontSize: 20, marginRight: 10 }}>🗓️</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: c.text, fontWeight: '700' }}>Es un movimiento planificado</Text>
+              <Text style={{ color: c.muted, fontSize: 12 }}>
+                {previo ? (esPlan ? (planDePrevio ? 'Está vinculado a un planificado cumplido' : planYaPaso ? 'Queda como planificado ya cumplido' : 'Pasa a pendiente en Planificados') : 'Marcalo si lo habías planificado de antes') : esPlan ? 'Elegí si todavía no ocurrió o si cumple uno que ya planificaste' : 'Para algo que esperás cobrar o pagar'}
+              </Text>
+            </View>
+            <View style={{ width: 44, height: 26, borderRadius: 13, backgroundColor: esPlan ? '#5dade2' : c.border, justifyContent: 'center', paddingHorizontal: 3 }}>
+              <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: '#fff', alignSelf: esPlan ? 'flex-end' : 'flex-start' }} />
+            </View>
+          </Pressable>
+          {esPlan && previo && !planDePrevio && (
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 10 }}>
+              <Chip label="✅ Ya se cumplió" on={planYaPaso} color="#5dade2" onPress={() => setPlanYaPaso(true)} />
+              <Chip label="⏳ Todavía no se cumplió" on={!planYaPaso} color="#5dade2" onPress={() => setPlanYaPaso(false)} />
+            </View>
+          )}
+          {esPlan && !previo && (
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 10 }}>
+              <Chip label="⏳ Todavía no ocurrió (queda pendiente)" on={planSel === 'nuevo'} color="#5dade2" onPress={() => setPlanSel('nuevo')} />
+              {planesPendientes.map((p) => (
+                <Chip key={p.id} label={`✅ Cumple: ${p.concepto} (${p.fecha.slice(8)}/${p.fecha.slice(5, 7)})`} on={planSel === p.id} color="#5dade2" onPress={() => setPlanSel(p.id)} />
+              ))}
+            </View>
+          )}
+        </View>
+      )}
 
       {puedeRepetir && (
         <Pressable onPress={() => { tap(); setRepetir(!repetir); }} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: repetir ? c.accent + '22' : c.card, borderWidth: 1, borderColor: repetir ? c.accent : c.border, borderRadius: 14, padding: 12, marginTop: 6 }}>
@@ -427,7 +580,7 @@ export default function Nuevo() {
       <TextInput style={input} placeholder="Otra fecha AAAA-MM-DD" placeholderTextColor={c.muted} value={fecha} onChangeText={setFecha} onFocus={() => setCampo(null)} />
 
       <Pressable onPress={onGuardar} style={({ pressed }) => ({ backgroundColor: color, padding: 16, borderRadius: 14, alignItems: 'center', marginTop: 6, transform: [{ scale: pressed ? 0.97 : 1 }] })}>
-        <Text style={{ color: '#fff', fontWeight: '800', fontSize: 16 }}>{previo ? 'Guardar cambios' : cambioDoble ? 'Registrar cambio' : 'Guardar'}</Text>
+        <Text style={{ color: '#fff', fontWeight: '800', fontSize: 16 }}>{previo ? (puedePlanificar && esPlan && !planDePrevio && !planYaPaso ? 'Pasar a pendiente' : 'Guardar cambios') : cambioDoble ? 'Registrar cambio' : puedePlanificar && esPlan && planSel === 'nuevo' ? 'Guardar como pendiente' : 'Guardar'}</Text>
       </Pressable>
       {previo && (
         <Pressable onPress={onEliminar} style={{ padding: 16, alignItems: 'center' }}>

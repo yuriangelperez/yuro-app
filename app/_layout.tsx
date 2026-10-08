@@ -3,6 +3,8 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
 import { AppState, View } from 'react-native';
 import { useSesion } from '../src/auth';
+import { useBloqueo } from '../src/bloqueo';
+import PantallaBloqueo from '../src/PantallaBloqueo';
 import { nube } from '../src/nube';
 import { supabase } from '../src/supabase';
 import { procesarNotificaciones } from '../src/notificaciones';
@@ -25,6 +27,20 @@ async function conectarCuenta(uid: string) {
 }
 
 export default function Root() {
+  const bloqueo = useBloqueo();
+  useEffect(() => { bloqueo.iniciar(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // Si la app estuvo en segundo plano más de 30 segundos, vuelve a pedir el PIN
+  useEffect(() => {
+    let salida = 0;
+    const sub = AppState.addEventListener('change', (e) => {
+      if (e === 'background' || e === 'inactive') salida = salida || Date.now();
+      else if (e === 'active') {
+        if (salida && Date.now() - salida > 30_000) useBloqueo.getState().bloquear();
+        salida = 0;
+      }
+    });
+    return () => sub.remove();
+  }, []);
   const sesion = useSesion();
   const uid = sesion?.user.id;
   // Se puede entrar con sesión o con "Continuar sin cuenta" (datos solo en este teléfono). La elección se guarda con el resto de los datos,
@@ -49,14 +65,18 @@ export default function Root() {
       const { sincronizar, generarRecurrentes } = useFinanzas.getState();
       await sincronizar();
       await generarRecurrentes();
+      if (!useFinanzas.getState().nubeUid) await useFinanzas.getState().completarCuentas();
       await procesarNotificaciones().catch(() => {}); // en Android: notificaciones de bancos → movimientos
+      await useFinanzas.getState().aplicarReglas().catch(() => {}); // las reglas por palabra clasifican lo que llegó sin categoría
+      await useFinanzas.getState().conciliarPlanificados(); // lo esperado que ya llegó queda como cumplido
     };
     const sub = AppState.addEventListener('change', (e) => { if (e === 'active') correr(); });
     if (useFinanzas.persist.hasHydrated()) correr();
     const fin = useFinanzas.persist.onFinishHydration(() => correr());
     return () => { sub.remove(); fin(); };
   }, []);
-  if (sesion === undefined || !hidratado) return <View style={{ flex: 1, backgroundColor: c.bg }} />; // leyendo la sesión guardada
+  if (sesion === undefined || !hidratado || !bloqueo.cargado) return <View style={{ flex: 1, backgroundColor: c.bg }} />; // leyendo la sesión guardada
+  if (bloqueo.bloqueado) return <PantallaBloqueo />; // los datos no se muestran hasta ingresar el PIN
   return (
     <>
       <StatusBar style="light" />
@@ -70,6 +90,13 @@ export default function Root() {
           <Stack.Screen name="presupuestos" options={{ title: 'Presupuestos' }} />
           <Stack.Screen name="saldos" options={{ title: 'Tu dinero por moneda' }} />
           <Stack.Screen name="importar" options={{ title: 'Importar extracto' }} />
+          <Stack.Screen name="planificados" options={{ title: 'Planificados' }} />
+          <Stack.Screen name="reglas" options={{ title: 'Reglas automáticas' }} />
+          <Stack.Screen name="reservas" options={{ title: 'Reservas' }} />
+          <Stack.Screen name="ia" options={{ title: 'Asistente de IA' }} />
+          <Stack.Screen name="patrimonio" options={{ title: 'Patrimonio' }} />
+          <Stack.Screen name="deudas" options={{ title: 'Deudas' }} />
+          <Stack.Screen name="cuentas" options={{ title: 'Mis cuentas' }} />
           <Stack.Screen name="recurrentes" options={{ title: 'Recurrentes' }} />
           <Stack.Screen name="recurrente" options={{ presentation: 'modal', title: 'Recurrente' }} />
         </Stack.Protected>

@@ -5,7 +5,7 @@ import { Animated, Pressable, StyleSheet, Text, TextInput, View, useWindowDimens
 import { type Nivel, useFinanzas } from './store';
 import { c, catInfo } from './theme';
 import { MONEDAS, type Moneda, type Movimiento } from './types';
-import { etiquetaMes, fechaCorta, money, sumaMes } from './util';
+import { etiquetaMes, fechaCorta, hoyYmd, money, sumaMes } from './util';
 
 // ---- Responsive (web en compu/tablet) ----
 // escritorio: barra lateral y dos columnas; el contenido nunca se estira más que MAX.
@@ -34,7 +34,7 @@ export const tap = (fuerte = false) => {
   (fuerte ? Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium) : Haptics.selectionAsync()).catch(() => {});
 };
 
-export const colorValor = (m: Movimiento) => (m.tipo === 'Ingreso' || m.valor > 0 ? c.ingreso : m.tipo === 'Ahorro' ? c.ahorro : c.gasto);
+export const colorValor = (m: Movimiento) => (m.tipo === 'Deuda' || m.tipo === 'Pago deuda' ? '#af7ac5' : m.tipo === 'Transferencia' ? '#5dade2' : m.tipo === 'Ingreso' || m.valor > 0 ? c.ingreso : m.tipo === 'Ahorro' ? c.ahorro : c.gasto);
 
 export const Card = ({ children, style }: { children: React.ReactNode; style?: object }) => <View style={[s.card, style]}>{children}</View>;
 
@@ -172,15 +172,27 @@ const Pendiente = ({ id }: { id: string }) => {
   return enCola ? <Text style={{ color: c.aviso, fontSize: 11 }}>⏳ sin subir</Text> : null;
 };
 
-export const Fila = ({ m, conFecha = true }: { m: Movimiento; conFecha?: boolean }) => (
+// "Mercado Pago → Naranja X" para una transferencia; el método para el resto
+const useCuentasDe = (m: Movimiento) => {
+  const cuentas = useFinanzas((st) => st.cuentas);
+  if (m.tipo !== 'Transferencia') return m.metodo;
+  const nombre = (id?: string | null) => cuentas.find((x) => x.id === id)?.nombre ?? '?';
+  return `${m.cuentaId ? nombre(m.cuentaId) : m.metodo || '?'} → ${nombre(m.cuentaDestinoId)}`;
+};
+
+export const Fila = ({ m, conFecha = true }: { m: Movimiento; conFecha?: boolean }) => {
+  const donde = useCuentasDe(m);
+  const programado = m.fecha > hoyYmd() && (m.tipo === 'Ingreso' || m.tipo === 'Egreso' || m.tipo === 'Ahorro'); // fecha futura: todavía no ocurrió
+  const planificado = useFinanzas((st) => st.planificados.some((p) => p.movimientoId === m.id)); // este movimiento cumplió algo que habías planificado
+  return (
   <Link href={{ pathname: '/nuevo', params: { id: m.id, fecha: m.fecha } }} asChild>
     {/* Estilo fijo: con Link asChild los estilos-función se pierden en web */}
     <Pressable style={s.fila} android_ripple={{ color: c.card2 }}>
-      <Avatar categoria={m.categoria || (m.tipo === 'Ahorro' || m.tipo === 'Cambio' ? m.tipo : '')} />
+      <Avatar categoria={m.categoria || (m.tipo === 'Ahorro' || m.tipo === 'Cambio' ? m.tipo : m.tipo === 'Transferencia' ? 'Transferencia' : m.tipo === 'Deuda' || m.tipo === 'Pago deuda' ? 'Deuda' : '')} />
       <View style={{ flex: 1, marginLeft: 12 }}>
-        <Text style={s.titulo} numberOfLines={1}>{m.concepto}</Text>
+        <Text style={s.titulo} numberOfLines={1}>{m.concepto}{planificado ? ' 🗓️' : ''}{programado ? ' ⏳' : ''}</Text>
         <Text style={s.sub} numberOfLines={1}>
-          {[m.categoria || m.tipo, m.metodo].filter(Boolean).join(' · ')}
+          {programado ? `Programado para el ${fechaCorta(m.fecha)} · ` : planificado ? 'Planificado · ' : ''}{[m.categoria || m.tipo, donde].filter(Boolean).join(' · ')}
           {conFecha ? ` · ${fechaCorta(m.fecha)}` : ''}
           {m.hora ? ` · ${m.hora}` : ''}
           {m.cuotasTotales ? ` · cuota ${m.cuotasCumplidas ?? 0}/${m.cuotasTotales}` : ''}
@@ -193,7 +205,8 @@ export const Fila = ({ m, conFecha = true }: { m: Movimiento; conFecha?: boolean
       </View>
     </Pressable>
   </Link>
-);
+  );
+};
 
 // Selector ARS / USD / USDT tipo "segmented control"
 export const SelectorMoneda = ({ valor, onChange, chico = false }: { valor: Moneda; onChange: (m: Moneda) => void; chico?: boolean }) => (

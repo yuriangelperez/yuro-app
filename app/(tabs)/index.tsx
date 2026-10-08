@@ -3,11 +3,11 @@ import { useMemo, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
 import { Dona, type Porcion } from '../../src/charts';
 import { calcularCuotas } from '../../src/cuotas';
-import { convertir, movimientosDe, saldosAl, useConversor, useFinanzas, useMovimientosMes } from '../../src/store';
+import { convertir, movimientosDe, saldosAl, useConversor, useFinanzas, useAgenda, useAlertas, useMovimientosMes, useReservas, useResumenDeudas, useTransferenciasSugeridas } from '../../src/store';
 import { c, catInfo } from '../../src/theme';
 import type { Moneda, Movimiento } from '../../src/types';
 import { Barra, Card, Columnas, EstadoSync, Fab, Fila, centrado, MesSelector, SelectorMoneda, Tip, Titulo, s, tap } from '../../src/ui';
-import { MESES, diasDelMes, etiquetaMes, hoyYmd, masReciente, mesActual, money, pct, sumaMes } from '../../src/util';
+import { MESES, diasDelMes, etiquetaMes, fechaCorta, hoyYmd, masReciente, mesActual, money, pct, sumaMes } from '../../src/util';
 
 // Totales del mes convertidos a la moneda de vista
 const totales = (lista: Movimiento[], conv: (v: number, de: Moneda) => number) => {
@@ -41,11 +41,26 @@ const Leyenda = ({ color, t }: { color: string; t: string }) => (
 );
 
 export default function Resumen() {
-  const { sincronizando, sincronizar, presupuestos, porAnio, url, setMonedaVista, actualizarCotizaciones, saldosIniciales, ahorrosIniciales, recurrentes, recienGenerados, limpiarGenerados } = useFinanzas();
-  const { mes, movimientos } = useMovimientosMes();
+  const { sincronizando, sincronizar, presupuestos, porAnio, url, setMonedaVista, actualizarCotizaciones, saldosIniciales, ahorrosIniciales, recurrentes, recienGenerados, limpiarGenerados, planificados } = useFinanzas();
+  const sugeridas = useTransferenciasSugeridas();
+  const { mes, movimientos: todosDelMes } = useMovimientosMes();
+  // Un movimiento con fecha futura (ej. una suscripción cargada para el 28/10) todavía no ocurrió: no cuenta como hecho, queda como pendiente
+  const movimientos = useMemo(() => todosDelMes.filter((m) => m.fecha <= hoyYmd()), [todosDelMes]);
+  // Planificados + movimientos programados a futuro + suscripciones/recurrentes del mes (cada uno pendiente o cumplido)
+  const agenda = useAgenda();
+  const alertas = useAlertas();
+  const estadosReservas = useReservas();
+  const resumenDeudas = useResumenDeudas().filter((r) => r.deuda.activa && !r.saldada);
+  const cumplidosMes = agenda.filter((i) => i.estado === 'cumplido').length;
+  const proximos = useMemo(() => [...agenda].sort((a, b) => (a.estado === b.estado ? a.fecha.localeCompare(b.fecha) : a.estado === 'pendiente' ? -1 : 1)).slice(0, 6), [agenda]);
   const { vista, cot, conv, puede } = useConversor();
   const [sel, setSel] = useState<string | null>(null);
   const $ = (n: number) => money(n, vista);
+  // Lo que falta cobrar / pagar este mes (planificados y suscripciones pendientes), en la moneda de vista
+  const pendientesAgenda = agenda.filter((i) => i.estado === 'pendiente');
+  const porCobrar = pendientesAgenda.filter((i) => i.valor > 0).reduce((a, i) => a + conv(i.valor, i.moneda), 0);
+  const porPagar = -pendientesAgenda.filter((i) => i.valor < 0).reduce((a, i) => a + conv(i.valor, i.moneda), 0);
+  const mostrarProyeccion = mes >= mesActual() && pendientesAgenda.length > 0;
 
   const r = useMemo(() => totales(movimientos, conv), [movimientos, vista, cot]); // eslint-disable-line react-hooks/exhaustive-deps
   const prev = useMemo(() => totales(movimientosDe(porAnio, sumaMes(mes, -1)), conv), [porAnio, mes, vista, cot]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -53,7 +68,7 @@ export default function Resumen() {
 
   // Cuánto tenés de cada moneda (acumulado) y cuánto se movió este mes
   const saldos = useMemo(() => saldosAl(porAnio, saldosIniciales, ahorrosIniciales, mes), [porAnio, saldosIniciales, ahorrosIniciales, mes]);
-  const delMes = (mon: Moneda) => movimientos.filter((m) => m.moneda === mon).reduce((a, m) => a + m.valor, 0);
+  const delMes = (mon: Moneda) => movimientos.filter((m) => m.moneda === mon && m.tipo !== 'Transferencia').reduce((a, m) => a + m.valor, 0); // una transferencia entre cuentas propias no cambia el total
   const visibles = saldos.filter((x) => x.usada || x.moneda === 'ARS');
   const totalTodo = saldos.reduce((a, x) => a + conv(x.total, x.moneda), 0);
 
@@ -127,6 +142,9 @@ export default function Resumen() {
             <View style={{ flex: 1 }}>
               <Titulo t="💰 Tu dinero" sub={mes === mesActual() ? 'Lo que tenés hoy en cada moneda' : `Lo que tenías al cierre de ${etiquetaMes(mes)}`} />
             </View>
+            <Link href="/patrimonio" asChild>
+              <Pressable onPress={() => tap()} hitSlop={10} style={{ marginRight: 14 }}><Text style={{ color: c.accent, fontWeight: '700' }}>📈</Text></Pressable>
+            </Link>
             <Link href="/saldos" asChild>
               <Pressable onPress={() => tap()} hitSlop={10}><Text style={{ color: c.accent, fontWeight: '700' }}>Ajustar</Text></Pressable>
             </Link>
@@ -161,6 +179,27 @@ export default function Resumen() {
         </Card>
         <Tip id="saldos" emoji="👛">Acá ves cuánto tenés en cada moneda, sumando todo lo del año. Para que coincida con tu plata real, tocá “Ajustar” y cargá cuánto tenías de cada moneda el 1 de enero.</Tip>
 
+        {/* Reservas */}
+        {estadosReservas.length > 0 && (
+          <Link href="/reservas" asChild>
+            <Pressable onPress={() => tap()} style={s.card}>
+              <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+                <View style={{ flex: 1 }}><Titulo t="🗂️ Reservas" sub={`Reservado: ${$(estadosReservas.reduce((a, e) => a + conv(Math.max(e.queda, 0), e.reserva.moneda), 0))}`} /></View>
+                <Text style={{ color: c.accent, fontWeight: '700' }}>Ver ›</Text>
+              </View>
+              {estadosReservas.slice(0, 4).map((e) => (
+                <View key={e.reserva.id} style={{ marginTop: 8 }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <Text style={{ color: c.text }}>{e.reserva.nombre}</Text>
+                    <Text style={{ color: e.queda < 0 ? c.gasto : c.muted, fontSize: 12 }}>queda {money(e.queda, e.reserva.moneda)} de {money(e.reserva.monto, e.reserva.moneda)}</Text>
+                  </View>
+                  <Barra valor={e.reserva.monto ? Math.min(100, (e.gastado / e.reserva.monto) * 100) : 100} color={e.queda < 0 ? c.gasto : '#48c9b0'} alto={6} />
+                </View>
+              ))}
+            </Pressable>
+          </Link>
+        )}
+
         {/* Balance */}
         <Card>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
@@ -168,6 +207,23 @@ export default function Resumen() {
             <SelectorMoneda valor={vista} onChange={setMonedaVista} chico />
           </View>
           <Text style={{ ...s.big, color: r.libre < 0 ? c.gasto : c.text }}>{$(r.libre)}</Text>
+          {mostrarProyeccion && (
+            <View style={{ backgroundColor: c.card2, borderRadius: 12, padding: 12, marginTop: 10 }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                <Text style={{ color: c.muted }}>⏳ Por cobrar</Text>
+                <Text style={{ color: c.ingreso, fontWeight: '700' }}>+{$(porCobrar)}</Text>
+              </View>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 }}>
+                <Text style={{ color: c.muted }}>⏳ Por pagar</Text>
+                <Text style={{ color: c.gasto, fontWeight: '700' }}>−{$(porPagar)}</Text>
+              </View>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', borderTopWidth: 1, borderTopColor: c.border, marginTop: 8, paddingTop: 8 }}>
+                <Text style={{ color: c.text, fontWeight: '700' }}>Te quedaría</Text>
+                <Text style={{ color: r.libre + porCobrar - porPagar < 0 ? c.gasto : c.ingreso, fontWeight: '800', fontSize: 20 }}>{$(r.libre + porCobrar - porPagar)}</Text>
+              </View>
+              <Text style={{ color: c.muted, fontSize: 11, marginTop: 4 }}>Después de cobrar y pagar {pendientesAgenda.length} {pendientesAgenda.length === 1 ? 'pendiente' : 'pendientes'} (planificados y suscripciones).</Text>
+            </View>
+          )}
           <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
             <Mini emoji="⬆️" titulo="Ingresos" valor={r.ingresos} color={c.ingreso} moneda={vista} />
             <Mini emoji="⬇️" titulo="Gastos" valor={r.gastos} color={c.gasto} moneda={vista} />
@@ -192,7 +248,7 @@ export default function Resumen() {
             </Text>
           )}
         </Card>
-        <Tip id="libre">“Dinero libre” es lo que te queda: ingresos − gastos − ahorro. Si se pone en rojo, gastaste más de lo que entró. Con ARS / USD / USDT elegís en qué moneda ver los totales.</Tip>
+        <Tip id="libre">“Dinero libre” es lo que te queda: ingresos − gastos − ahorro. “Te quedaría” le suma lo que falta cobrar y le resta lo que falta pagar (planificados y suscripciones). Si se pone en rojo, gastaste más de lo que entró. Con ARS / USD / USDT elegís en qué moneda ver los totales.</Tip>
 
 
         {/* Torta de gastos */}
@@ -243,6 +299,73 @@ export default function Resumen() {
               </View>
               {cuotas.porCargar.length > 0 && <Text style={{ color: c.aviso, marginTop: 8 }}>📌 {cuotas.porCargar.length} cuota(s) de este mes todavía sin cargar</Text>}
               {cuotas.terminan.length > 0 && <Text style={{ color: c.ingreso, marginTop: 8 }}>🎉 Este mes terminás: {cuotas.terminan.map((p) => p.ultima.concepto).join(', ')}</Text>}
+            </Pressable>
+          </Link>
+        )}
+
+        {/* Alertas */}
+        {alertas.length > 0 && (
+          <View style={[s.card, { borderColor: alertas.some((a) => a.nivel === 'rojo') ? c.gasto : c.aviso }]}>
+            <Titulo t={`🔔 Para revisar (${alertas.length})`} />
+            {alertas.slice(0, 5).map((a) => (
+              <Link key={a.id} href={a.ruta} asChild>
+                <Pressable onPress={() => tap()} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 6 }}>
+                  <Text style={{ width: 24 }}>{a.nivel === 'rojo' ? '🔴' : '🟡'}</Text>
+                  <Text style={{ color: c.text, flex: 1 }}>{a.texto}</Text>
+                  <Text style={{ color: c.accent }}>›</Text>
+                </Pressable>
+              </Link>
+            ))}
+            {alertas.length > 5 && <Text style={s.sub}>y {alertas.length - 5} más…</Text>}
+          </View>
+        )}
+
+        {/* Posibles transferencias entre cuentas propias */}
+        {sugeridas.length > 0 && (
+          <Link href="/cuentas" asChild>
+            <Pressable onPress={() => tap()} style={s.tip}>
+              <Text style={{ fontSize: 20, marginRight: 10 }}>↔️</Text>
+              <Text style={{ color: c.text, flex: 1 }}>{sugeridas.length === 1 ? 'Un movimiento parece una transferencia entre tus cuentas' : `${sugeridas.length} movimientos parecen transferencias entre tus cuentas`}. Tocá para revisar: así no inflan tus gastos e ingresos.</Text>
+            </Pressable>
+          </Link>
+        )}
+
+        {/* Deudas */}
+        {resumenDeudas.length > 0 && (
+          <Link href="/deudas" asChild>
+            <Pressable onPress={() => tap()} style={s.card}>
+              <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+                <View style={{ flex: 1 }}><Titulo t="🤝 Deudas" sub="Lo que debés y lo que te deben" /></View>
+                <Text style={{ color: c.accent, fontWeight: '700' }}>Ver ›</Text>
+              </View>
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                <Mini emoji="📤" titulo="Yo debo" valor={resumenDeudas.filter((r) => r.deuda.direccion === 'debo').reduce((a, r) => a + conv(r.pendiente, r.deuda.moneda), 0)} color={c.gasto} moneda={vista} />
+                <Mini emoji="📥" titulo="Me deben" valor={resumenDeudas.filter((r) => r.deuda.direccion === 'me_deben').reduce((a, r) => a + conv(r.pendiente, r.deuda.moneda), 0)} color={c.ingreso} moneda={vista} />
+              </View>
+              {resumenDeudas.filter((r) => r.deuda.vencimiento && r.deuda.vencimiento < hoyYmd()).length > 0 && (
+                <Text style={{ color: c.aviso, marginTop: 8 }}>⚠️ {resumenDeudas.filter((r) => r.deuda.vencimiento && r.deuda.vencimiento < hoyYmd()).length} deuda(s) vencida(s)</Text>
+              )}
+            </Pressable>
+          </Link>
+        )}
+
+        {/* Planificados */}
+        {agenda.length > 0 && (
+          <Link href="/planificados" asChild>
+            <Pressable onPress={() => tap()} style={s.card}>
+              <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+                <View style={{ flex: 1 }}><Titulo t="🗓️ Planificados" sub={`${cumplidosMes} de ${agenda.length} ya ${agenda.length === 1 ? 'se cumplió' : 'se cumplieron'} este mes · incluye suscripciones`} /></View>
+                <Text style={{ color: c.accent, fontWeight: '700' }}>Ver ›</Text>
+              </View>
+              {proximos.map((p) => (
+                <View key={p.id} style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6 }}>
+                  <Text style={{ width: 22 }}>{p.estado === 'cumplido' ? '✅' : p.fecha < hoyYmd() ? '⚠️' : '⏳'}</Text>
+                  <Text style={{ color: p.estado === 'cumplido' ? c.muted : c.text, flex: 1 }} numberOfLines={1}>
+                    {p.concepto} <Text style={{ color: c.muted, fontSize: 12 }}>· {p.estado === 'cumplido' ? (p.valor > 0 ? 'cobrado' : 'pagado') : p.fecha < hoyYmd() ? `venció ${fechaCorta(p.fecha)}` : fechaCorta(p.fecha)}</Text>
+                  </Text>
+                  <Text style={{ color: p.estado === 'cumplido' ? c.muted : p.valor > 0 ? c.ingreso : c.text, fontWeight: '600' }}>{money(p.valor, p.moneda)}</Text>
+                </View>
+              ))}
             </Pressable>
           </Link>
         )}

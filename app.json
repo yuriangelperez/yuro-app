@@ -11,7 +11,22 @@
     },
     "plugins": [
       "expo-router",
-      "expo-web-browser"
+      "expo-web-browser",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ],
+      "expo-secure-store",
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Yuro usa tu rostro para desbloquear la app."
+        }
+      ]
     ],
     "version": "1.0.2",
     "android": {

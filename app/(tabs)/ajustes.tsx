@@ -6,6 +6,8 @@ import { abrirAjustes, tieneAcceso } from '../../modules/yuro-notificaciones';
 import { type EntradaLog, hayServicio, leerLog, procesarNotificaciones } from '../../src/notificaciones';
 import { conectarMp, desconectarMp, type EstadoMp, estadoMp, sincronizarMp } from '../../src/mp';
 import { entrarConGoogle, salir, useSesion } from '../../src/auth';
+import BloqueoAjustes from '../../src/BloqueoAjustes';
+import { exportarExcel, exportarRespaldo } from '../../src/exportar';
 import { nube } from '../../src/nube';
 import { type FuenteUsd, type Nivel, useCategorias, useFinanzas } from '../../src/store';
 import { c, catInfo } from '../../src/theme';
@@ -311,10 +313,43 @@ export default function Ajustes() {
         <ListaCategorias nivel="cat2" titulo="Categoría 2" />
       </Card>
 
+      <BloqueoAjustes />
+
+      <Card>
+        <Titulo t="💾 Exportar y respaldo" sub="Tus datos son tuyos: llevátelos cuando quieras." />
+        <Pressable onPress={async () => { tap(); try { avisar(`Listo: ${await exportarExcel()}.`); } catch (e) { avisar(e instanceof Error ? e.message : 'No se pudo exportar'); } }} style={{ paddingVertical: 10 }}>
+          <Text style={{ color: c.text }}>📊 Exportar a Excel (movimientos, cuentas, deudas…) ›</Text>
+        </Pressable>
+        <Pressable onPress={async () => { tap(); try { avisar(`Respaldo listo: ${await exportarRespaldo()}.`); } catch (e) { avisar(e instanceof Error ? e.message : 'No se pudo exportar'); } }} style={{ paddingVertical: 10 }}>
+          <Text style={{ color: c.text }}>🗄️ Descargar copia de seguridad (JSON) ›</Text>
+        </Pressable>
+      </Card>
+
       <Card>
         <Titulo t="🎯 Saldos, presupuestos y ayuda" />
         <Link href="/importar" asChild>
           <Pressable style={{ paddingVertical: 10 }}><Text style={{ color: c.text }}>📥 Importar extracto del banco (Excel/CSV) ›</Text></Pressable>
+        </Link>
+        <Link href="/reglas" asChild>
+          <Pressable style={{ paddingVertical: 10 }}><Text style={{ color: c.text }}>🧠 Reglas automáticas por palabra ›</Text></Pressable>
+        </Link>
+        <Link href="/reservas" asChild>
+          <Pressable style={{ paddingVertical: 10 }}><Text style={{ color: c.text }}>🗂️ Reservas: plata apartada para un fin ›</Text></Pressable>
+        </Link>
+        <Link href="/ia" asChild>
+          <Pressable style={{ paddingVertical: 10 }}><Text style={{ color: c.text }}>✨ Asistente de IA (Ollama, gratis) ›</Text></Pressable>
+        </Link>
+        <Link href="/patrimonio" asChild>
+          <Pressable style={{ paddingVertical: 10 }}><Text style={{ color: c.text }}>📈 Patrimonio y su evolución ›</Text></Pressable>
+        </Link>
+        <Link href="/deudas" asChild>
+          <Pressable style={{ paddingVertical: 10 }}><Text style={{ color: c.text }}>🤝 Deudas: lo que debo y lo que me deben ›</Text></Pressable>
+        </Link>
+        <Link href="/planificados" asChild>
+          <Pressable style={{ paddingVertical: 10 }}><Text style={{ color: c.text }}>🗓️ Movimientos planificados ›</Text></Pressable>
+        </Link>
+        <Link href="/cuentas" asChild>
+          <Pressable style={{ paddingVertical: 10 }}><Text style={{ color: c.text }}>🏦 Mis cuentas y saldos por cuenta ›</Text></Pressable>
         </Link>
         <Link href="/recurrentes" asChild>
           <Pressable style={{ paddingVertical: 10 }}><Text style={{ color: c.text }}>🔁 Movimientos recurrentes ›</Text></Pressable>

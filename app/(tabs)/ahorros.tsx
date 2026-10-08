@@ -5,7 +5,7 @@ import { convertir, saldosAl, useConversor, useFinanzas } from '../../src/store'
 import { c } from '../../src/theme';
 import type { Moneda } from '../../src/types';
 import { Barra, Card, Columnas, Fila, MesSelector, SelectorMoneda, Tip, Titulo, centrado, s, tap } from '../../src/ui';
-import { MESES, masReciente, mesActual, money, moneyCorto, parseMonto, pct, sumaMes } from '../../src/util';
+import { MESES, masReciente, mesActual, money, moneyCorto, parseMonto, pct, sumaMes, yaPaso } from '../../src/util';
 
 const BANDERA: Record<Moneda, string> = { ARS: '🇦🇷', USD: '💵', USDT: '🪙' };
 const nombreMes = (ym: string) => `${MESES[+ym.slice(5) - 1]} ${ym.slice(0, 4)}`;
@@ -63,7 +63,7 @@ export default function Ahorros() {
 
   // Mes a mes del año: cuánto ahorraste, qué parte de tus ingresos fue y cuánto llevabas acumulado
   const d = useMemo(() => {
-    const lista = porAnio[anio] ?? [];
+    const lista = (porAnio[anio] ?? []).filter(yaPaso); // lo programado a futuro todavía no cuenta
     const ajuste = Object.entries(ahorrosIniciales[anio] ?? {}).reduce((a, [m, v]) => a + conv(v ?? 0, m as Moneda), 0);
     // Lo que ya llevabas ahorrado al cerrar el año anterior
     const previo = saldosAl(porAnio, saldosIniciales, ahorrosIniciales, `${+anio - 1}-12`).reduce((a, x) => a + conv(x.ahorrado, x.moneda), 0);

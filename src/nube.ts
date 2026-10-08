@@ -1,6 +1,11 @@
 import type { FuenteUsd, Presupuesto, Recurrente } from './store';
 import { supabase } from './supabase';
-import { MONEDAS, type Moneda, type Movimiento, type Tipo } from './types';
+import type { Deuda } from './deudas';
+import type { Planificado } from './planificados';
+import type { Regla } from './reglas';
+import type { Reserva } from './reservas';
+import type { Cuenta, TipoCuenta } from './proveedores';
+import { MONEDAS, type Moneda, type Movimiento, type Origen, type Tipo } from './types';
 
 // Capa de acceso a Supabase (schema "yuro"). La seguridad la da RLS: cada usuario solo ve sus filas.
 
@@ -26,16 +31,21 @@ const fallar = (error: { message: string } | null) => {
 type Fila = {
   id: string; fecha: string; hora: string | null; concepto: string; valor: number | string; moneda: Moneda; valor_ars: number | string | null; tipo: Tipo;
   metodo: string; categoria: string; categoria2: string; cuotas_cumplidas: number | string | null; cuotas_totales: number | string | null;
+  cuenta_id?: string | null; cuenta_destino_id?: string | null; deuda_id?: string | null; origen?: Origen; external_id?: string | null;
 };
 
 const aMov = (f: Fila): Movimiento => ({
   id: f.id, fecha: f.fecha, hora: f.hora ? f.hora.slice(0, 5) : null, concepto: f.concepto, valor: Number(f.valor), tipo: f.tipo, metodo: f.metodo, categoria: f.categoria, categoria2: f.categoria2,
   cuotasCumplidas: f.cuotas_cumplidas == null ? null : Number(f.cuotas_cumplidas), cuotasTotales: f.cuotas_totales == null ? null : Number(f.cuotas_totales), moneda: f.moneda, valorArs: f.valor_ars == null ? null : Number(f.valor_ars),
+  cuentaId: f.cuenta_id ?? null, cuentaDestinoId: f.cuenta_destino_id ?? null, deudaId: f.deuda_id ?? null, origen: f.origen, externalId: f.external_id ?? null,
 });
 
 export const aFila = (m: Movimiento): Fila => ({
   id: m.id, fecha: m.fecha, hora: m.hora ?? null, concepto: m.concepto, valor: m.valor, moneda: m.moneda, valor_ars: m.valorArs ?? null, tipo: m.tipo,
   metodo: m.metodo, categoria: m.categoria, categoria2: m.categoria2, cuotas_cumplidas: m.cuotasCumplidas, cuotas_totales: m.cuotasTotales,
+  cuenta_id: m.cuentaId ?? null, cuenta_destino_id: m.cuentaDestinoId ?? null, deuda_id: m.deudaId ?? null,
+  // origen y external_id solo se mandan si se conocen: omitirlos en una edición conserva los que ya tiene la fila
+  ...(m.origen ? { origen: m.origen } : {}), ...(m.externalId ? { external_id: m.externalId } : {}),
 });
 
 const PAGINA = 1000; // tope de filas por consulta de Supabase
@@ -71,7 +81,124 @@ async function reemplazar(tabla: string, uid: string, filas: Registro[], onConfl
   }
 }
 
+type FilaCuenta = { id: string; nombre: string; proveedor_id: string | null; tipo: TipoCuenta; moneda: Moneda; saldo_inicial: number | string; activa: boolean };
+const aCuenta = (f: FilaCuenta): Cuenta => ({ id: f.id, nombre: f.nombre, proveedorId: f.proveedor_id, tipo: f.tipo, moneda: f.moneda, saldoInicial: Number(f.saldo_inicial), activa: f.activa });
+const aFilaCuenta = (c: Cuenta) => ({ id: c.id, nombre: c.nombre, proveedor_id: c.proveedorId, tipo: c.tipo, moneda: c.moneda, saldo_inicial: c.saldoInicial, activa: c.activa });
+
+type FilaPlan = { id: string; fecha: string; concepto: string; valor: number | string; moneda: Moneda; tipo: 'Ingreso' | 'Egreso'; metodo: string; cuenta_id: string | null; categoria: string; categoria2: string; estado: Planificado['estado']; movimiento_id: string | null };
+const aPlan = (f: FilaPlan): Planificado => ({ id: f.id, fecha: f.fecha, concepto: f.concepto, valor: Number(f.valor), moneda: f.moneda, tipo: f.tipo, metodo: f.metodo, cuentaId: f.cuenta_id, categoria: f.categoria, categoria2: f.categoria2, estado: f.estado, movimientoId: f.movimiento_id });
+const aFilaPlan = (p: Planificado) => ({ id: p.id, fecha: p.fecha, concepto: p.concepto, valor: p.valor, moneda: p.moneda, tipo: p.tipo, metodo: p.metodo, cuenta_id: p.cuentaId, categoria: p.categoria, categoria2: p.categoria2, estado: p.estado, movimiento_id: p.movimientoId });
+
+type FilaDeuda = { id: string; nombre: string; direccion: Deuda['direccion']; monto: number | string; moneda: Moneda; fecha: string; vencimiento: string | null; nota: string; activa: boolean };
+const aDeuda = (f: FilaDeuda): Deuda => ({ id: f.id, nombre: f.nombre, direccion: f.direccion, monto: Number(f.monto), moneda: f.moneda, fecha: f.fecha, vencimiento: f.vencimiento, nota: f.nota, activa: f.activa });
+const aFilaDeuda = (d: Deuda) => ({ id: d.id, nombre: d.nombre, direccion: d.direccion, monto: d.monto, moneda: d.moneda, fecha: d.fecha, vencimiento: d.vencimiento, nota: d.nota, activa: d.activa });
+
+type FilaReserva = { id: string; nombre: string; monto: number | string; moneda: Moneda; cuenta_id: string | null; categoria: string; patron: string; mensual: boolean; desde: string; activa: boolean };
+const aReserva = (f: FilaReserva): Reserva => ({ id: f.id, nombre: f.nombre, monto: Number(f.monto), moneda: f.moneda, cuentaId: f.cuenta_id, categoria: f.categoria, patron: f.patron, mensual: f.mensual, desde: f.desde, activa: f.activa });
+const aFilaReserva = (r: Reserva) => ({ id: r.id, nombre: r.nombre, monto: r.monto, moneda: r.moneda, cuenta_id: r.cuentaId, categoria: r.categoria, patron: r.patron, mensual: r.mensual, desde: r.desde, activa: r.activa });
+
 export const nube = {
+  async listarReglas(): Promise<Regla[]> {
+    const { data, error } = await supabase.from('reglas_categoria').select('*').order('created_at');
+    fallar(error);
+    return ((data ?? []) as { id: string; patron: string; categoria: string; categoria2: string }[]).map((r) => ({ id: r.id, patron: r.patron, categoria: r.categoria, categoria2: r.categoria2 ?? '' }));
+  },
+
+  async guardarRegla(r: Regla) {
+    fallar((await supabase.from('reglas_categoria').upsert({ id: r.id, patron: r.patron, categoria: r.categoria, categoria2: r.categoria2 })).error);
+  },
+
+  async guardarReglas(uid: string, rs: Regla[]) {
+    if (rs.length) fallar((await supabase.from('reglas_categoria').upsert(rs.map((r) => ({ id: r.id, user_id: uid, patron: r.patron, categoria: r.categoria, categoria2: r.categoria2 })), { onConflict: 'user_id,patron' })).error);
+  },
+
+  async borrarRegla(id: string) {
+    fallar((await supabase.from('reglas_categoria').delete().eq('id', id)).error);
+  },
+
+  async listarReservas(): Promise<Reserva[]> {
+    const { data, error } = await supabase.from('reservas').select('*').order('created_at');
+    fallar(error);
+    return ((data ?? []) as FilaReserva[]).map(aReserva);
+  },
+
+  async guardarReserva(r: Reserva) {
+    fallar((await supabase.from('reservas').upsert(aFilaReserva(r))).error);
+  },
+
+  async guardarReservas(uid: string, rs: Reserva[]) {
+    if (rs.length) fallar((await supabase.from('reservas').upsert(rs.map((r) => ({ ...aFilaReserva(r), user_id: uid })))).error);
+  },
+
+  async borrarReserva(id: string) {
+    fallar((await supabase.from('reservas').delete().eq('id', id)).error);
+  },
+
+  async listarDeudas(): Promise<Deuda[]> {
+    const { data, error } = await supabase.from('deudas').select('*').order('created_at');
+    fallar(error);
+    return ((data ?? []) as FilaDeuda[]).map(aDeuda);
+  },
+
+  async guardarDeuda(d: Deuda) {
+    fallar((await supabase.from('deudas').upsert(aFilaDeuda(d))).error);
+  },
+
+  async guardarDeudas(uid: string, ds: Deuda[]) {
+    if (ds.length) fallar((await supabase.from('deudas').upsert(ds.map((d) => ({ ...aFilaDeuda(d), user_id: uid })))).error);
+  },
+
+  async borrarDeuda(id: string) {
+    fallar((await supabase.from('deudas').delete().eq('id', id)).error);
+  },
+
+  async listarPlanificados(): Promise<Planificado[]> {
+    const { data, error } = await supabase.from('planificados').select('*').order('fecha');
+    fallar(error);
+    return ((data ?? []) as FilaPlan[]).map(aPlan);
+  },
+
+  async guardarPlanificados(uid: string, ps: Planificado[]) {
+    if (ps.length) fallar((await supabase.from('planificados').upsert(ps.map((p) => ({ ...aFilaPlan(p), user_id: uid })))).error);
+  },
+
+  async guardarPlanificado(p: Planificado) {
+    fallar((await supabase.from('planificados').upsert(aFilaPlan(p))).error);
+  },
+
+  async borrarPlanificado(id: string) {
+    fallar((await supabase.from('planificados').delete().eq('id', id)).error);
+  },
+
+  // Las cuentas también las crea la base sola (a partir del "método" de un movimiento nuevo), por eso nunca se
+  // sube una lista completa para "reemplazar": se guardan de a una y se bajan todas.
+  async listarCuentas(): Promise<Cuenta[]> {
+    const { data, error } = await supabase.from('cuentas').select('*').order('created_at');
+    fallar(error);
+    return ((data ?? []) as FilaCuenta[]).map(aCuenta);
+  },
+
+  async guardarCuenta(c: Cuenta) {
+    fallar((await supabase.from('cuentas').upsert(aFilaCuenta(c))).error);
+  },
+
+  // Sube las cuentas locales. Si en la nube ya hay una con el mismo nombre (sin distinguir mayúsculas) se usa esa:
+  // devuelve el mapa id local → id de la nube para reenlazar los movimientos.
+  async guardarCuentas(uid: string, cuentas: Cuenta[]): Promise<Map<string, string>> {
+    const remap = new Map<string, string>();
+    if (!cuentas.length) return remap;
+    const existentes = await nube.listarCuentas();
+    const porNombre = new Map(existentes.map((c) => [c.nombre.toLowerCase(), c.id]));
+    const nuevas: Cuenta[] = [];
+    for (const c of cuentas) {
+      const id = porNombre.get(c.nombre.toLowerCase());
+      if (id) remap.set(c.id, id);
+      else { nuevas.push(c); porNombre.set(c.nombre.toLowerCase(), c.id); }
+    }
+    if (nuevas.length) fallar((await supabase.from('cuentas').insert(nuevas.map((c) => ({ ...aFilaCuenta(c), user_id: uid })))).error);
+    return remap;
+  },
+
   async listar(desde: string, hasta: string): Promise<Movimiento[]> {
     const out: Movimiento[] = [];
     for (let i = 0; ; i += PAGINA) {
