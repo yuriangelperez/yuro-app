@@ -1,8 +1,9 @@
 import { Link, router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
-import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { avisar, confirmar } from '../src/alerta';
 import { emparejar } from '../src/planificados';
+import { descripcion as descripcionRec } from '../src/recurrentes';
 import { emojiCuenta } from '../src/proveedores';
 import { convertir, useCategorias, useFinanzas } from '../src/store';
 import { nuevoId } from '../src/nube';
@@ -78,7 +79,7 @@ const Teclado = ({ onKey, onLimpiar }: { onKey: (k: string) => void; onLimpiar: 
         })}
       </View>
     ))}
-    <Text style={{ color: c.muted, fontSize: 11, textAlign: 'center' }}>Podés sumar y restar (ej. 1500+2300). Mantené ⌫ para borrar todo.</Text>
+    <Text style={{ color: c.muted, fontSize: 11, textAlign: 'center' }}>Podés sumar y restar (ej. 1500+2300). Mantené ⌫ para borrar todo.{Platform.OS === 'web' ? ' En la compu escribí con el teclado.' : ''}</Text>
   </View>
 );
 
@@ -97,7 +98,7 @@ const Monto = ({ expr, moneda, color, activo, onPress, titulo, nota }: { expr: s
 };
 
 export default function Nuevo() {
-  const { id, fecha: fechaParam } = useLocalSearchParams<{ id?: string; fecha?: string }>();
+  const { id, fecha: fechaParam, monto: montoParam, tipo: tipoParam } = useLocalSearchParams<{ id?: string; fecha?: string; monto?: string; tipo?: string }>(); // monto/tipo vienen de la calculadora
   const porAnio = useFinanzas((s) => s.porAnio);
   const { guardar, eliminar, cotizaciones, guardarPlanificado, borrarPlanificado } = useFinanzas();
   const planificados = useFinanzas((st) => st.planificados);
@@ -105,8 +106,8 @@ export default function Nuevo() {
   const todos = useMemo(() => Object.values(porAnio).flat(), [porAnio]);
   const previo = id ? (porAnio[(fechaParam ?? '').slice(0, 4)] ?? todos).find((m) => m.id === id) : undefined;
 
-  const [tipo, setTipo] = useState<Tipo>(previo?.tipo ?? 'Egreso');
-  const [expr, setExpr] = useState(previo ? aExpr(Math.abs(previo.valor)) : '');
+  const [tipo, setTipo] = useState<Tipo>(previo?.tipo ?? (tipoParam === 'Ingreso' ? 'Ingreso' : 'Egreso'));
+  const [expr, setExpr] = useState(previo ? aExpr(Math.abs(previo.valor)) : montoParam ?? '');
   const [moneda, setMoneda] = useState<Moneda>(previo?.moneda ?? 'ARS');
   const [expr2, setExpr2] = useState(''); // lo que recibís en un cambio
   const [moneda2, setMoneda2] = useState<Moneda>('USD');
@@ -153,9 +154,13 @@ export default function Nuevo() {
   const color = TIPOS.find((x) => x.t === tipo)!.color;
   const cambioDoble = tipo === 'Cambio' && !previo; // un cambio nuevo carga las dos monedas
   const sinTildes = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
-  // Habilita las cuotas: método de crédito (con o sin tilde), categoría "Cuota" o un movimiento que ya tenía cuotas.
+  // Las cuotas valen para cualquier método de pago (tarjeta, Mercado Pago, efectivo…). Se activan solas con un método de crédito, la categoría
+  // "Cuota" o un movimiento que ya tenía cuotas, y en un gasto se pueden prender o apagar a mano.
   const esTransf = tipo === 'Transferencia';
-  const credito = !esTransf && sinTildes(metodo).includes('credito') || sinTildes(categoria) === 'cuota' || !!previo?.cuotasTotales;
+  const cuotasAuto = (!esTransf && sinTildes(metodo).includes('credito')) || sinTildes(categoria) === 'cuota' || !!previo?.cuotasTotales;
+  const [cuotasManual, setCuotasManual] = useState<boolean | null>(null); // null = automático
+  const puedeCuotas = tipo === 'Egreso' && !esTransf;
+  const credito = !esTransf && (cuotasManual ?? cuotasAuto) && (puedeCuotas || cuotasAuto);
   const input = { backgroundColor: c.card, color: c.text, borderRadius: 12, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: c.border } as const;
 
   // Sugerencias: conceptos que ya usaste (los más frecuentes, o los que coinciden con lo que escribís)
@@ -333,6 +338,21 @@ export default function Nuevo() {
     if (auto === campo) setAuto(null);
     else if (auto === otro || !(otro === 'a' ? expr : expr2)) setAuto(otro);
   };
+  // En la web (compu) el monto se escribe con el teclado físico: números, coma o punto, + y −, borrar y Enter (=)
+  const onKeyRef = useRef(onKey);
+  onKeyRef.current = onKey;
+  useEffect(() => {
+    const doc = (globalThis as unknown as { document?: { addEventListener: (t: string, f: (e: TeclaWeb) => void) => void; removeEventListener: (t: string, f: (e: TeclaWeb) => void) => void } }).document;
+    if (Platform.OS !== 'web' || !campo || !doc) return;
+    type TeclaWeb = { key: string; target: { tagName?: string } | null; ctrlKey: boolean; metaKey: boolean; altKey: boolean; preventDefault: () => void };
+    const alTeclear = (e: TeclaWeb) => {
+      if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target?.tagName ?? '') || e.ctrlKey || e.metaKey || e.altKey) return; // escribiendo en otro campo, o un atajo del navegador
+      const k = /^\d$/.test(e.key) ? e.key : e.key === ',' || e.key === '.' ? ',' : e.key === '+' ? '+' : e.key === '-' ? '−' : e.key === 'Backspace' ? '⌫' : e.key === 'Enter' || e.key === '=' ? '=' : null;
+      if (k) { e.preventDefault(); onKeyRef.current(k); }
+    };
+    doc.addEventListener('keydown', alTeclear);
+    return () => doc.removeEventListener('keydown', alTeclear);
+  }, [campo]);
   useEffect(() => {
     if (!cambioDoble || !auto) return;
     const [src, de, a2] = auto === 'b' ? [expr, moneda, moneda2] : [expr2, moneda2, moneda];
@@ -494,6 +514,11 @@ export default function Nuevo() {
         </>
       )}
 
+      {puedeCuotas && !cambioDoble && (
+        <View style={{ flexDirection: 'row', marginTop: 4 }}>
+          <Chip label={credito ? '💳 En cuotas ✓' : '💳 ¿Es en cuotas?'} on={credito} onPress={() => setCuotasManual(!credito)} />
+        </View>
+      )}
       {credito && !cambioDoble && (
         <>
           <Etiqueta t="Cuotas (cumplidas / totales)" />
@@ -567,7 +592,7 @@ export default function Nuevo() {
       )}
       {yaRecurrente && (
         <Pressable onPress={() => { tap(); router.push({ pathname: '/recurrente', params: { id: yaRecurrente.id } }); }} style={{ backgroundColor: c.card, borderRadius: 14, padding: 12, marginTop: 6 }}>
-          <Text style={{ color: c.text }}>🔁 Se repite todos los meses (día {yaRecurrente.dia}) · <Text style={{ color: c.accent, fontWeight: '700' }}>Editar recurrente ›</Text></Text>
+          <Text style={{ color: c.text }}>🔁 Se repite: {descripcionRec(yaRecurrente).toLowerCase()} · <Text style={{ color: c.accent, fontWeight: '700' }}>Editar recurrente ›</Text></Text>
         </Pressable>
       )}
 

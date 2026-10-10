@@ -8,7 +8,10 @@ import { type ProveedorIA, type SugerenciaIA, URL_OLLAMA } from './ia';
 import { emparejar, type Planificado } from './planificados';
 import { aplicables, buscarRegla, type Regla } from './reglas';
 import { type EstadoReserva, estadosReservas, type Reserva } from './reservas';
-import { detectarTransferencias, type ParTransferencia } from './transferencias';
+import { ajustesParaConservarSaldos, fueraDelMes } from './mantenimiento';
+import { calcularAgenda, type ItemAgenda } from './agenda';
+import { type Frecuencia, faltaCargar, fechasDelMes } from './recurrentes';
+import { type DepositoReserva, detectarDepositosReserva, detectarTransferencias, type ParTransferencia } from './transferencias';
 import { type Cuenta, proveedorDe, tipoSugerido } from './proveedores';
 import { sheets } from './sheets';
 import { CATEGORIAS, CATEGORIAS2 } from './theme';
@@ -38,6 +41,12 @@ export type Recurrente = {
   desde: string; // YYYY-MM desde el que corre
   activo: boolean;
   ultimoYm: string | null; // último mes ya cargado (o salteado porque ya existía)
+  // Frecuencia: sin definir = mensual. Quincenal = el `dia` y 15 días después. Semanal = cada `diaSemana` (0 domingo … 6 sábado).
+  // Las no mensuales llevan la cuenta por fecha (`ultimaFecha`) y arrancan en `inicio`, sin cargar lo anterior.
+  frecuencia?: Frecuencia;
+  diaSemana?: number | null;
+  inicio?: string | null;
+  ultimaFecha?: string | null;
 };
 
 type Op = { anio: number } & ({ kind: 'upsert'; m: Movimiento } | { kind: 'delete'; id: string });
@@ -63,6 +72,8 @@ interface State {
   guardarRecurrente: (r: Omit<Recurrente, 'id'> & { id?: string }) => void;
   borrarRecurrente: (id: string) => void;
   generarRecurrentes: () => Promise<void>;
+  cargarRecurrenteAhora: (id: string) => Promise<boolean>; // crea ya el movimiento de ese recurrente (con la fecha de su día si ya pasó, o la de hoy) sin esperar a que llegue el día
+  recargarRecurrentes: () => Promise<number>; // vuelve a cargar los recurrentes de este mes que figuran cargados pero no tienen su movimiento; devuelve cuántos
   limpiarGenerados: () => void;
   monedaVista: Moneda; // en qué moneda se muestran los totales
   fuenteUsd: FuenteUsd;
@@ -78,9 +89,11 @@ interface State {
   borrarPlanificado: (id: string) => Promise<void>;
   cumplirPlanificado: (id: string) => Promise<void>; // "ya ocurrió": carga el movimiento hoy y lo vincula
   conciliarPlanificados: () => Promise<void>;
+  cumplirPlanificadoCon: (planId: string, movimientoId: string) => Promise<boolean>; // marca un planificado como cumplido por ese movimiento (false si todavía no se subió a la nube)
   deshacerCumplido: (id: string) => Promise<void>; // "todavía no se cumplió": borra el movimiento y el planificado vuelve a pendiente // vincula solo los que ya llegaron (notificación, Mercado Pago, extracto, a mano)
   transferenciasDescartadas: string[]; // pares que dijiste "no es una transferencia" (solo en este dispositivo)
   descartarTransferencia: (clave: string) => void;
+  convertirEnDeposito: (d: DepositoReserva) => Promise<void>; // un "gasto de reserva" pasa a ser una transferencia hacia esa reserva
   convertirEnTransferencia: (par: ParTransferencia) => Promise<void>; // reemplaza el gasto y el ingreso por una sola transferencia
   deudas: Deuda[]; // lo que debés y lo que te deben
   // Crea o edita una deuda. Al crear, `movimiento` registra también la plata que entró (te prestaron) o salió (prestaste).
@@ -98,7 +111,7 @@ interface State {
   iaVistos: string[]; // movimientos que ya se mandaron a revisar (no se repiten)
   setSugerenciasIA: (s: SugerenciaIA[], vistos: string[]) => void;
   descartarSugerenciaIA: (id: string) => void;
-  aplicarSugerenciaIA: (s: SugerenciaIA) => Promise<'ok' | 'sin-cuentas'>;
+  aplicarSugerenciaIA: (s: SugerenciaIA, nombre?: string) => Promise<'ok' | 'sin-cuentas'>; // nombre: cómo querés llamar al movimiento (opcional)
   reservas: Reserva[]; // plata apartada dentro de una cuenta para un fin (no cambia el saldo)
   guardarReserva: (r: Omit<Reserva, 'id' | 'activa' | 'desde'> & { id?: string; activa?: boolean; desde?: string }) => Promise<Reserva>;
   borrarReserva: (id: string) => Promise<void>;
@@ -121,6 +134,9 @@ interface State {
   setMes: (ym: string) => void;
   guardar: (...ms: (Omit<Movimiento, 'id'> & { id?: string })[]) => Promise<void>;
   eliminar: (m: Movimiento) => Promise<void>;
+  eliminarVarios: (ms: Movimiento[]) => Promise<void>; // borra muchos con una sola sincronización
+  borrarTodoYEmpezar: () => Promise<number>; // borra movimientos, planificados y deudas y deja en cero los saldos iniciales; conserva cuentas, recurrentes, reservas, reglas y presupuestos. Devuelve cuántos movimientos borró
+  dejarSoloEsteMes: () => Promise<number>; // borra todo lo que no es de este mes y pasa lo borrado a los saldos iniciales; devuelve cuántos borró
   sincronizar: () => Promise<void>;
   modoLocal: boolean; // entró con "Continuar sin cuenta": usa la app solo con los datos de este teléfono
   setModoLocal: (v: boolean) => void;
@@ -242,7 +258,7 @@ export const useFinanzas = create<State>()(
       iaVistos: [],
       setSugerenciasIA: (nuevas, vistos) => set((s) => ({ sugerenciasIA: [...s.sugerenciasIA.filter((x) => !nuevas.some((n) => n.id === x.id)), ...nuevas], iaVistos: [...new Set([...s.iaVistos, ...vistos])].slice(-2000) })),
       descartarSugerenciaIA: (id) => set((s) => ({ sugerenciasIA: s.sugerenciasIA.filter((x) => x.id !== id) })),
-      aplicarSugerenciaIA: async (sug) => {
+      aplicarSugerenciaIA: async (sug, nombre) => {
         const m = Object.values(get().porAnio).flat().find((x) => x.id === sug.id);
         set((s) => ({ sugerenciasIA: s.sugerenciasIA.filter((x) => x.id !== sug.id) }));
         if (!m) return 'ok';
@@ -254,13 +270,12 @@ export const useFinanzas = create<State>()(
           const propia = cuentas.find((x) => x.id === m.cuentaId) ?? cuentas.find((x) => x.nombre.toLowerCase() === m.metodo.trim().toLowerCase());
           if (!contraria || !propia || contraria.id === propia.id) return 'sin-cuentas';
           const [origen, destino] = m.valor < 0 ? [propia, contraria] : [contraria, propia];
-          await get().guardar({ ...m, tipo: 'Transferencia', valor: Math.abs(m.valor), valorArs: m.valorArs == null ? null : Math.abs(m.valorArs), cuentaId: origen.id, cuentaDestinoId: destino.id, metodo: origen.nombre, categoria: '', categoria2: '' });
+          await get().guardar({ ...m, concepto: nombre?.trim() || m.concepto, tipo: 'Transferencia', valor: Math.abs(m.valor), valorArs: m.valorArs == null ? null : Math.abs(m.valorArs), cuentaId: origen.id, cuentaDestinoId: destino.id, metodo: origen.nombre, categoria: '', categoria2: '' });
           return 'ok';
         }
-        if (sug.categoria) {
-          get().agregarCategoria('cat', sug.categoria); // si es nueva queda disponible para el resto
-          await get().guardar({ ...m, categoria: sug.categoria });
-        }
+        const nuevoNombre = nombre?.trim() || m.concepto;
+        if (sug.categoria) get().agregarCategoria('cat', sug.categoria); // si es nueva queda disponible para el resto
+        if (sug.categoria || nuevoNombre !== m.concepto) await get().guardar({ ...m, concepto: nuevoNombre, categoria: sug.categoria || m.categoria });
         return 'ok';
       },
       guardarDeuda: async (d, movimiento) => {
@@ -288,6 +303,15 @@ export const useFinanzas = create<State>()(
       },
       transferenciasDescartadas: [],
       descartarTransferencia: (clave) => set((s) => ({ transferenciasDescartadas: [...s.transferenciasDescartadas, clave] })),
+      convertirEnDeposito: async ({ mov: m, origen, destino }) => {
+        if (get().url && !get().nubeUid) return; // la hoja de Google no tiene tipo Transferencia
+        // Se edita el mismo movimiento (mismo id): borrar y crear otro con el mismo id de Mercado Pago choca con el índice único de la nube
+        await get().guardar({
+          id: m.id, fecha: m.fecha, hora: m.hora ?? null, concepto: `Transferencia ${origen.nombre} → ${destino.nombre}`, valor: Math.abs(m.valor), moneda: m.moneda,
+          valorArs: m.valorArs == null ? null : Math.abs(m.valorArs), tipo: 'Transferencia', metodo: origen.nombre, categoria: '', categoria2: '', cuotasCumplidas: null, cuotasTotales: null,
+          cuentaId: origen.id, cuentaDestinoId: destino.id, origen: m.origen, externalId: m.externalId,
+        });
+      },
       convertirEnTransferencia: async ({ egreso: e, ingreso: i, comision }) => {
         if (get().url && !get().nubeUid) return; // la hoja de Google no tiene tipo Transferencia
         const nombre = (id?: string | null) => get().cuentas.find((x) => x.id === id)?.nombre ?? '?';
@@ -348,6 +372,15 @@ export const useFinanzas = create<State>()(
         const libres = Object.values(porAnio).flat().filter((m) => !ocupados.has(m.id) && m.fecha <= hoyYmd() && // uno con fecha futura todavía no cumplió nada
            !(nubeUid && sinSubir.has(m.id)));
         for (const { plan, mov } of emparejar(pend, libres)) await get().guardarPlanificado({ ...plan, estado: 'cumplido', movimientoId: mov.id });
+      },
+      cumplirPlanificadoCon: async (planId, movimientoId) => {
+        const { planificados, pendientes, nubeUid } = get();
+        const p = planificados.find((x) => x.id === planId);
+        if (!p) return false;
+        // En la nube el vínculo es una clave foránea: el movimiento tiene que estar ya subido
+        if (nubeUid && pendientes.some((q) => q.kind === 'upsert' && q.m.id === movimientoId)) return false;
+        await get().guardarPlanificado({ ...p, estado: 'cumplido', movimientoId });
+        return true;
       },
       // Modo sin nube: crea una cuenta por cada "método" que ya usaste (en la nube lo hace la migración / la base)
       completarCuentas: async () => {
@@ -415,6 +448,27 @@ export const useFinanzas = create<State>()(
         const igual = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
         const actualizados = recurrentes.map((r) => {
           if (!r.activo) return r;
+          const { id: _, dia: __, desde: ___, activo: ____, ultimoYm: _____, frecuencia: ______, diaSemana: _______, inicio: ________, ultimaFecha: _________, ...campos } = r;
+          const armar = (fecha: string): Omit<Movimiento, 'id'> => {
+            const valorArs = convertir(r.valor, r.moneda, 'ARS', cotizaciones);
+            return { ...campos, fecha, valorArs: valorArs === null ? null : Math.round(valorArs * 100) / 100, cuotasCumplidas: null, cuotasTotales: null };
+          };
+          // Quincenal / semanal: se cuenta por fecha, desde el inicio, y solo se carga lo que ya llegó
+          if ((r.frecuencia ?? 'mensual') !== 'mensual') {
+            let ultima = r.ultimaFecha ?? null;
+            let mes = (ultima ?? r.inicio ?? `${r.desde}-01`).slice(0, 7);
+            for (let n = 0; mes <= ym && n < 12; n++, mes = sumaMes(mes, 1)) {
+              for (const f of fechasDelMes(r, mes)) {
+                if (f > hoy) break;
+                if (ultima && f <= ultima) continue;
+                ultima = f;
+                if (movimientosDe(porAnio, mes).some((m) => m.tipo === r.tipo && igual(m.concepto, r.concepto) && m.fecha === f)) continue;
+                nuevos.push(armar(f));
+                nombres.push(r.concepto);
+              }
+            }
+            return ultima === (r.ultimaFecha ?? null) ? r : { ...r, ultimaFecha: ultima };
+          }
           let mes = r.ultimoYm && r.ultimoYm >= r.desde ? sumaMes(r.ultimoYm, 1) : r.desde;
           let ultimo = r.ultimoYm;
           for (let n = 0; mes <= ym && n < 12; n++, mes = sumaMes(mes, 1)) {
@@ -422,15 +476,42 @@ export const useFinanzas = create<State>()(
             if (mes === ym && dia > +hoy.slice(8)) break; // todavía no llegó el día
             ultimo = mes;
             if (movimientosDe(porAnio, mes).some((m) => m.tipo === r.tipo && igual(m.concepto, r.concepto))) continue;
-            const { id: _, dia: __, desde: ___, activo: ____, ultimoYm: _____, ...campos } = r;
-            const valorArs = convertir(r.valor, r.moneda, 'ARS', cotizaciones);
-            nuevos.push({ ...campos, fecha: `${mes}-${String(dia).padStart(2, '0')}`, valorArs: valorArs === null ? null : Math.round(valorArs * 100) / 100, cuotasCumplidas: null, cuotasTotales: null });
+            nuevos.push(armar(`${mes}-${String(dia).padStart(2, '0')}`));
             nombres.push(r.concepto);
           }
           return ultimo === r.ultimoYm ? r : { ...r, ultimoYm: ultimo };
         });
         set({ recurrentes: actualizados, ...(nombres.length ? { recienGenerados: nombres } : {}) });
         if (nuevos.length) await get().guardar(...nuevos);
+      },
+
+      cargarRecurrenteAhora: async (id) => {
+        const r = get().recurrentes.find((x) => x.id === id);
+        if (!r) return false;
+        const hoy = hoyYmd();
+        const mensual = (r.frecuencia ?? 'mensual') === 'mensual';
+        const diaFecha = `${hoy.slice(0, 7)}-${String(Math.min(r.dia, diasDelMes(hoy.slice(0, 7)))).padStart(2, '0')}`;
+        const fecha = mensual && diaFecha <= hoy ? diaFecha : hoy; // si su día ya pasó, con esa fecha; si no, hoy
+        const { id: _, dia: __, desde: ___, activo: ____, ultimoYm: _____, frecuencia: ______, diaSemana: _______, inicio: ________, ultimaFecha: _________, ...campos } = r;
+        const valorArs = convertir(r.valor, r.moneda, 'ARS', get().cotizaciones);
+        await get().guardar({ ...campos, fecha, hora: null, valorArs: valorArs === null ? null : Math.round(valorArs * 100) / 100, cuotasCumplidas: null, cuotasTotales: null });
+        // Se marca como cargado para que no se genere de nuevo cuando llegue su día
+        set((s) => ({ recurrentes: s.recurrentes.map((x) => (x.id !== id ? x : mensual ? { ...x, ultimoYm: hoy.slice(0, 7) } : { ...x, ultimaFecha: !x.ultimaFecha || x.ultimaFecha < hoy ? hoy : x.ultimaFecha })) }));
+        return true;
+      },
+
+      recargarRecurrentes: async () => {
+        const { recurrentes, porAnio } = get();
+        const hoy = hoyYmd();
+        const ym = hoy.slice(0, 7);
+        const delMes = movimientosDe(porAnio, ym);
+        let n = 0;
+        // Se les quita la marca de "ya cargado" a los que no tienen su movimiento, y se vuelven a generar (sin duplicar los que sí lo tienen)
+        const nuevos = recurrentes.map((r) => (faltaCargar(r, delMes, hoy) ? (n++, { ...r, ultimoYm: sumaMes(ym, -1) }) : r));
+        if (!n) return 0;
+        set({ recurrentes: nuevos });
+        await get().generarRecurrentes();
+        return n;
       },
 
       setSaldoInicial: (anio, m, valor) =>
@@ -535,6 +616,60 @@ export const useFinanzas = create<State>()(
           };
         });
         await get().sincronizar();
+      },
+
+      eliminarVarios: async (ms) => {
+        if (!ms.length) return;
+        const ids = new Set(ms.map((m) => m.id));
+        for (const p of get().planificados.filter((x) => x.movimientoId && ids.has(x.movimientoId) && x.estado === 'cumplido')) {
+          void get().guardarPlanificado({ ...p, estado: 'pendiente', movimientoId: null });
+        }
+        set((s) => {
+          const porAnio = { ...s.porAnio };
+          for (const a of new Set(ms.map((m) => anioDe(m.fecha)))) porAnio[a] = (porAnio[a] ?? []).filter((x) => !ids.has(x.id));
+          const enCola = new Set(s.pendientes.flatMap((p) => (p.kind === 'upsert' ? [p.m.id] : [])));
+          const borrados: Op[] = ms.flatMap((m): Op[] => (m.id.startsWith('n-') && enCola.has(m.id) ? [] : [{ kind: 'delete', anio: anioDe(m.fecha), id: m.id.startsWith('n-') ? `0|${m.fecha}|${m.concepto}` : m.id }]));
+          return { porAnio, pendientes: [...s.pendientes.filter((p) => !(p.kind === 'upsert' && ids.has(p.m.id))), ...borrados] };
+        });
+        await get().sincronizar();
+      },
+
+      borrarTodoYEmpezar: async () => {
+        const todos = Object.values(get().porAnio).flat();
+        await get().eliminarVarios(todos);
+        for (const p of [...get().planificados]) await get().borrarPlanificado(p.id);
+        for (const d of [...get().deudas]) await get().borrarDeuda(d.id);
+        // Los saldos de partida de cada cuenta y de cada moneda vuelven a cero: lo que tenés hoy se vuelve a cargar en "Efectivo y digital"
+        for (const c of get().cuentas.filter((x) => x.saldoInicial)) await get().guardarCuenta({ ...c, saldoInicial: 0 });
+        for (const [anio, porMoneda] of Object.entries(get().saldosIniciales)) for (const m of Object.keys(porMoneda) as Moneda[]) get().setSaldoInicial(anio, m, 0);
+        for (const [anio, porMoneda] of Object.entries(get().ahorrosIniciales)) for (const m of Object.keys(porMoneda) as Moneda[]) get().setAhorroInicial(anio, m, 0);
+        // Los recurrentes quedan sin la marca de "cargado" y se vuelven a generar
+        set((s) => ({ recurrentes: s.recurrentes.map((r) => ({ ...r, ultimoYm: null, ultimaFecha: null })) }));
+        await get().generarRecurrentes();
+        return todos.length;
+      },
+
+      dejarSoloEsteMes: async () => {
+        const ym = hoyYmd().slice(0, 7);
+        const anio = ym.slice(0, 4);
+        const { porAnio, cuentas, saldosIniciales, ahorrosIniciales } = get();
+        const borrar = fueraDelMes(Object.values(porAnio).flat(), ym);
+        if (!borrar.length) return 0;
+        const cuentasAntes = saldosPorCuenta(porAnio, cuentas);
+        const totalesAntes = saldosAl(porAnio, saldosIniciales, ahorrosIniciales, ym);
+        await get().eliminarVarios(borrar);
+        const despues = get().porAnio;
+        const ajuste = ajustesParaConservarSaldos({
+          cuentas, cuentasAntes, cuentasDespues: saldosPorCuenta(despues, cuentas),
+          totalesAntes, totalesDespues: saldosAl(despues, saldosIniciales, ahorrosIniciales, ym),
+        });
+        for (const a of ajuste.cuentas) {
+          const c = get().cuentas.find((x) => x.id === a.id);
+          if (c) await get().guardarCuenta({ ...c, saldoInicial: Math.round((c.saldoInicial + a.dif) * 100) / 100 });
+        }
+        for (const [m, d] of Object.entries(ajuste.totales) as ['ARS' | 'USD' | 'USDT', number][]) get().setSaldoInicial(anio, m, Math.round(((get().saldosIniciales[anio]?.[m] ?? 0) + d) * 100) / 100);
+        for (const [m, d] of Object.entries(ajuste.ahorros) as ['ARS' | 'USD' | 'USDT', number][]) get().setAhorroInicial(anio, m, Math.round(((get().ahorrosIniciales[anio]?.[m] ?? 0) + d) * 100) / 100);
+        return borrar.length;
       },
 
       conectarNube: async ({ subirLocal }) => {
@@ -817,7 +952,7 @@ export const saldosAl = (porAnio: Record<string, Movimiento[]>, iniciales: Ajust
 export type SaldosCuenta = Partial<Record<Moneda, number>>;
 
 // Cuánta plata hay en cada cuenta (por moneda): saldo inicial + lo que entró − lo que salió. Una transferencia resta en el
-// origen y suma en el destino. Los movimientos sin cuenta no entran. Los ahorros se cuentan como plata que salió de la cuenta.
+// origen y suma en el destino. Los movimientos sin cuenta no entran. Un ahorro no cambia el saldo de la cuenta: la plata sigue ahí, solo queda marcada como ahorrada.
 export const saldosPorCuenta = (porAnio: Record<string, Movimiento[]>, cuentas: Cuenta[]): Map<string, SaldosCuenta> => {
   const out = new Map<string, SaldosCuenta>();
   const sumar = (id: string | null | undefined, moneda: Moneda, v: number) => {
@@ -833,12 +968,19 @@ export const saldosPorCuenta = (porAnio: Record<string, Movimiento[]>, cuentas: 
     if (m.tipo === 'Transferencia') {
       sumar(m.cuentaId, m.moneda, -Math.abs(m.valor));
       sumar(m.cuentaDestinoId, m.moneda, Math.abs(m.valor));
-    } else sumar(m.cuentaId, m.moneda, m.valor);
+    } else if (m.tipo !== 'Ahorro') sumar(m.cuentaId, m.moneda, m.valor); // un ahorro no mueve plata: sigue en la misma cuenta (solo se marca como ahorrada)
   }
   return out;
 };
 
 // Gastos e ingresos de las últimas semanas que parecen una transferencia entre tus cuentas (para confirmar o descartar)
+export const useDepositosReserva = () => {
+  const porAnio = useFinanzas((s) => s.porAnio);
+  const cuentas = useFinanzas((s) => s.cuentas);
+  const descartadas = useFinanzas((s) => s.transferenciasDescartadas);
+  return useMemo(() => detectarDepositosReserva(Object.values(porAnio).flat(), cuentas, new Set(descartadas)), [porAnio, cuentas, descartadas]);
+};
+
 export const useTransferenciasSugeridas = () => {
   const porAnio = useFinanzas((s) => s.porAnio);
   const descartadas = useFinanzas((s) => s.transferenciasDescartadas);
@@ -854,42 +996,14 @@ export const useTransferenciasSugeridas = () => {
 //  - movimiento: un gasto/ingreso/ahorro con fecha futura (programado)
 //  - recurrente: una suscripción o movimiento que se repite todos los meses
 // Los pendientes de meses anteriores que no llegaron siguen a la vista solo en el mes actual.
-export type ItemAgenda = {
-  id: string; concepto: string; valor: number; moneda: Moneda; fecha: string; estado: 'pendiente' | 'cumplido';
-  origen: 'plan' | 'movimiento' | 'recurrente'; plan?: Planificado; movimiento?: Movimiento; recurrenteId?: string;
-};
+export type { ItemAgenda };
 
 export const useAgenda = (): ItemAgenda[] => {
   const mes = useFinanzas((s) => s.mes);
   const planificados = useFinanzas((s) => s.planificados);
   const recurrentes = useFinanzas((s) => s.recurrentes);
   const delAnio = useFinanzas((s) => s.porAnio[mes.slice(0, 4)]);
-  return useMemo(() => {
-    const hoy = hoyYmd();
-    const delMes = (delAnio ?? []).filter((m) => m.fecha.startsWith(mes));
-    const lista: ItemAgenda[] = planificados
-      .filter((p) => (p.estado === 'cumplido' && p.fecha.startsWith(mes)) || (p.estado === 'pendiente' && (p.fecha.startsWith(mes) || (mes === mesActual() && p.fecha.slice(0, 7) < mes))))
-      .map((p) => ({ id: p.id, concepto: p.concepto, valor: p.valor, moneda: p.moneda, fecha: p.fecha, estado: p.estado as 'pendiente' | 'cumplido', origen: 'plan' as const, plan: p }));
-    for (const m of delMes) {
-      if (m.fecha > hoy && (m.tipo === 'Ingreso' || m.tipo === 'Egreso' || m.tipo === 'Ahorro')) {
-        lista.push({ id: m.id, concepto: m.concepto, valor: m.valor, moneda: m.moneda, fecha: m.fecha, estado: 'pendiente', origen: 'movimiento', movimiento: m });
-      }
-    }
-    const mismo = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
-    for (const r of recurrentes) {
-      if (!r.activo || r.desde > mes) continue;
-      // Si ese mes ya hay un movimiento igual (cargado a mano) la recurrente no suma otro: si ya ocurrió figura cumplida; si es futuro ya está como programado
-      const real = delMes.find((m) => m.tipo === r.tipo && mismo(m.concepto, r.concepto));
-      if (real && real.fecha > hoy) continue;
-      const cargado = !!real || (!!r.ultimoYm && r.ultimoYm >= mes);
-      if (!cargado && lista.some((i) => i.estado === 'pendiente' && mismo(i.concepto, r.concepto))) continue; // ya está como planificado: no se cuenta dos veces
-      lista.push({
-        id: `rec-${r.id}`, concepto: r.concepto, valor: r.valor, moneda: r.moneda, estado: cargado ? 'cumplido' : 'pendiente', origen: 'recurrente', recurrenteId: r.id,
-        fecha: `${mes}-${String(Math.min(r.dia, diasDelMes(mes))).padStart(2, '0')}`,
-      });
-    }
-    return lista.sort((a, b) => a.fecha.localeCompare(b.fecha));
-  }, [planificados, recurrentes, delAnio, mes]);
+  return useMemo(() => calcularAgenda({ mes, hoy: hoyYmd(), planificados, recurrentes, delAnio }), [planificados, recurrentes, delAnio, mes]);
 };
 
 // Cada deuda con lo pagado y lo que falta (los pagos salen de los movimientos cargados)

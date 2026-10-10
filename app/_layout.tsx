@@ -97,6 +97,9 @@ export default function Root() {
           <Stack.Screen name="patrimonio" options={{ title: 'Patrimonio' }} />
           <Stack.Screen name="deudas" options={{ title: 'Deudas' }} />
           <Stack.Screen name="cuentas" options={{ title: 'Mis cuentas' }} />
+          <Stack.Screen name="revisar" options={{ title: 'Revisar mis datos' }} />
+          <Stack.Screen name="calculadora" options={{ title: 'Calculadora' }} />
+          <Stack.Screen name="efectivo" options={{ title: 'Efectivo y digital' }} />
           <Stack.Screen name="recurrentes" options={{ title: 'Recurrentes' }} />
           <Stack.Screen name="recurrente" options={{ presentation: 'modal', title: 'Recurrente' }} />
         </Stack.Protected>

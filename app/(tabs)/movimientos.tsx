@@ -12,7 +12,9 @@ const FILTROS: { label: string; tipo: Tipo | null; color: string }[] = [
   { label: '⬇️ Gastos', tipo: 'Egreso', color: c.gasto },
   { label: '⬆️ Ingresos', tipo: 'Ingreso', color: c.ingreso },
   { label: '🐷 Ahorro', tipo: 'Ahorro', color: c.ahorro },
+  { label: '🔄 Cambios', tipo: 'Cambio', color: '#5dade2' },
   { label: '↔️ Transferencias', tipo: 'Transferencia', color: '#5dade2' },
+  { label: '🤝 Deudas', tipo: 'Deuda', color: '#af7ac5' },
 ];
 
 type Rango = 'mes' | 'hoy' | '7' | '30' | 'custom';
@@ -57,7 +59,7 @@ export default function Movimientos() {
   const secciones = useMemo(() => {
     const busca = sinTildes(q.trim());
     const lista = movimientos
-      .filter((m) => !tipo || m.tipo === tipo)
+      .filter((m) => !tipo || m.tipo === tipo || (tipo === 'Deuda' && m.tipo === 'Pago deuda')) // "Deudas" incluye los pagos
       .filter((m) => !moneda || m.moneda === moneda)
       .filter((m) => !busca || sinTildes([m.concepto, m.categoria, m.categoria2, m.metodo].join(' ')).includes(busca))
       .sort(masReciente);

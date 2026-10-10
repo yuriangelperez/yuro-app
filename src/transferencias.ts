@@ -45,3 +45,30 @@ export function detectarTransferencias(movs: Movimiento[], descartadas: Readonly
   }
   return out.sort((a, b) => b.egreso.fecha.localeCompare(a.egreso.fecha));
 }
+
+// ───────── Depósitos a una reserva ─────────
+// Plata que pasaste de la cuenta principal a una reserva (ej. Mercado Pago → "MP Reserva - Gastos") suele quedar cargada como un gasto
+// de categoría "Reserva" dentro de la propia reserva. No es un gasto: es una transferencia entre tus cuentas.
+
+import type { Cuenta } from './proveedores';
+
+export type DepositoReserva = { clave: string; mov: Movimiento; destino: Cuenta; origen: Cuenta };
+
+const norm = (s: string) => s.trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+const esReserva = (nombre: string) => /reserva/i.test(nombre);
+
+export function detectarDepositosReserva(movs: Movimiento[], cuentas: Cuenta[], descartadas: ReadonlySet<string>): DepositoReserva[] {
+  const out: DepositoReserva[] = [];
+  for (const m of movs) {
+    if (m.tipo !== 'Egreso' || m.valor >= 0 || !m.cuentaId || norm(m.categoria) !== 'reserva') continue;
+    const destino = cuentas.find((x) => x.id === m.cuentaId);
+    if (!destino || !esReserva(destino.nombre)) continue;
+    const clave = `dep|${m.id}`;
+    if (descartadas.has(clave)) continue;
+    // La cuenta de la que salió: la principal del mismo proveedor (Mercado Pago), la que no es una reserva
+    const origen = cuentas.find((x) => x.activa && x.id !== destino.id && !esReserva(x.nombre) && !!destino.proveedorId && x.proveedorId === destino.proveedorId && x.moneda === m.moneda);
+    if (!origen) continue;
+    out.push({ clave, mov: m, destino, origen });
+  }
+  return out;
+}

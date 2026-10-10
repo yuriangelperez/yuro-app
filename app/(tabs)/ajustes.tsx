@@ -1,4 +1,3 @@
-import { Link } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { AppState, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { avisar, confirmar, mensajeError } from '../../src/alerta';
@@ -11,8 +10,8 @@ import { exportarExcel, exportarRespaldo } from '../../src/exportar';
 import { nube } from '../../src/nube';
 import { type FuenteUsd, type Nivel, useCategorias, useFinanzas } from '../../src/store';
 import { c, catInfo } from '../../src/theme';
-import { Card, centrado, Chip, EstadoSync, MAX_FORM, NuevaCategoria, s, SelectorMoneda, tap, Titulo } from '../../src/ui';
-import { money, parseMonto } from '../../src/util';
+import { Card, centrado, Chip, EstadoSync, MAX_FORM, MenuGrupo, MenuItem, NuevaCategoria, s, SelectorMoneda, tap, Titulo } from '../../src/ui';
+import { mesActual, money, parseMonto } from '../../src/util';
 
 const FUENTES: { f: FuenteUsd; label: string }[] = [
   { f: 'blue', label: 'Blue' },
@@ -167,10 +166,10 @@ const MercadoPago = () => {
   // Mercado Pago arma el reporte con demora: se vuelve a preguntar solo cada 25 s (hasta ~3 min) mientras esta pantalla siga abierta.
   const viva = useRef(true);
   useEffect(() => () => { viva.current = false; }, []);
-  const traer = async (): Promise<string> => {
+  const traer = async (desde?: string): Promise<string> => {
     let total = 0;
     for (let intento = 0; ; intento++) {
-      const r = await sincronizarMp();
+      const r = await sincronizarMp(intento === 0 ? desde : undefined); // solo el primer pedido lleva la fecha: los siguientes esperan ese mismo reporte
       total += r.nuevos;
       if (r.nuevos) await useFinanzas.getState().sincronizar();
       if (r.estado === 'ok' || intento >= 7 || !viva.current) {
@@ -182,7 +181,9 @@ const MercadoPago = () => {
       await new Promise<void>((ok) => setTimeout(ok, 25_000));
     }
   };
-  const sync = () => correr(traer);
+  const sync = () => correr(() => traer());
+  // Trae todo desde el día 1 del mes (o desde donde elijas): el reporte normal solo mira los últimos 2 días
+  const desdeInicioDeMes = () => correr(() => traer(`${mesActual()}-01`));
   const boton = { padding: 14, borderRadius: 14, alignItems: 'center', marginTop: 8 } as const;
   return (
     <Card>
@@ -193,6 +194,10 @@ const MercadoPago = () => {
           <Pressable onPress={sync} disabled={trabajando} style={[boton, { backgroundColor: c.accent, opacity: trabajando ? 0.6 : 1 }]}>
             <Text style={{ color: '#fff', fontWeight: '700' }}>{trabajando ? 'Trabajando…' : '↻ Sincronizar'}</Text>
           </Pressable>
+          <Pressable onPress={desdeInicioDeMes} disabled={trabajando} style={[boton, { backgroundColor: c.card2, opacity: trabajando ? 0.6 : 1 }]}>
+            <Text style={{ color: c.text, fontWeight: '700' }}>📅 Traer todo desde el 1/{mesActual().slice(5)} (este mes)</Text>
+          </Pressable>
+          <Text style={[s.sub, { marginTop: 4 }]}>La sincronización normal solo mira los últimos 2 días. Este botón pide a Mercado Pago todo el mes. Lo que ya tenés no se duplica.</Text>
           <Pressable onPress={async () => { if (await confirmar('¿Desconectar Mercado Pago?', 'Se borra la conexión. Los movimientos ya importados quedan.', 'Desconectar')) correr(async () => { await desconectarMp(); return 'Desconectado.'; }); }} disabled={trabajando} style={[boton, { backgroundColor: c.card2 }]}>
             <Text style={{ color: c.text, fontWeight: '700' }}>Desconectar</Text>
           </Pressable>
@@ -264,6 +269,33 @@ const Notificaciones = () => {
   );
 };
 
+// Empezar de cero: borra los movimientos, planificados y deudas. Conserva cuentas (con saldo en cero), recurrentes, reservas, reglas, presupuestos y categorías.
+function BorrarTodo() {
+  const borrarTodoYEmpezar = useFinanzas((st) => st.borrarTodoYEmpezar);
+  const total = useFinanzas((st) => Object.values(st.porAnio).flat().length);
+  const [trabajando, setTrabajando] = useState(false);
+  const hacer = async () => {
+    if (trabajando) return;
+    tap();
+    if (!(await confirmar('¿Borrar todos los movimientos?', `Se borran ${total} movimientos, los planificados y las deudas, y los saldos iniciales vuelven a cero. Se conservan tus cuentas, recurrentes, reservas, reglas y presupuestos. Antes se descarga una copia de seguridad.`, 'Seguir'))) return;
+    if (!(await confirmar('Última confirmación', 'Esto no se puede deshacer, salvo volviendo a cargar la copia de seguridad a mano. ¿Borrar todo?', 'Borrar todo'))) return;
+    setTrabajando(true);
+    try {
+      try { await exportarRespaldo(); } catch { if (!(await confirmar('No se pudo descargar la copia', '¿Borrar igual, sin copia?', 'Borrar sin copia'))) { setTrabajando(false); return; } }
+      const n = await borrarTodoYEmpezar();
+      avisar(`Listo: se borraron ${n} movimientos. Empezá cargando lo que tenés hoy en “Efectivo y digital”.`);
+    } catch (e) {
+      avisar(mensajeError(e));
+    }
+    setTrabajando(false);
+  };
+  return (
+    <MenuGrupo titulo="Zona de cuidado">
+      <MenuItem emoji="🗑️" color={c.gasto} titulo={trabajando ? 'Borrando…' : 'Borrar todos mis movimientos y empezar de cero'} sub="Descarga una copia antes. Conserva cuentas, recurrentes, reservas y reglas" onPress={hacer} ultimo />
+    </MenuGrupo>
+  );
+}
+
 export default function Ajustes() {
   const sesion = useSesion();
   const { nubeUid, url, token, setConfig, sincronizar, sincronizando, versionScript, ultimaSync, monedaVista, setMonedaVista, fuenteUsd, setFuenteUsd, cotizaciones, actualizarCotizaciones, mostrarTips } = useFinanzas();
@@ -274,6 +306,28 @@ export default function Ajustes() {
   return (
     <ScrollView style={{ flex: 1, backgroundColor: c.bg }} contentContainerStyle={{ padding: 16, paddingBottom: 40, ...centrado(MAX_FORM) }} keyboardShouldPersistTaps="handled">
       <Cuenta />
+      <MenuGrupo titulo="Tu plata">
+        <MenuItem emoji="💵" color={c.ingreso} titulo="Efectivo y digital" sub="Cargá cuánta plata tenés realmente en cada lugar" ruta="/efectivo" />
+        <MenuItem emoji="🏦" color="#5dade2" titulo="Mis cuentas" sub="Cuánto tenés en cada banco, billetera o efectivo" ruta="/cuentas" />
+        <MenuItem emoji="👛" color="#48c9b0" titulo="Saldos iniciales" sub="Con cuánto empezaste el año en cada moneda" ruta="/saldos" />
+        <MenuItem emoji="🗂️" color="#48c9b0" titulo="Reservas" sub="Plata apartada para un fin, como el transporte" ruta="/reservas" />
+        <MenuItem emoji="🤝" color="#af7ac5" titulo="Deudas" sub="Lo que debés y lo que te deben" ruta="/deudas" />
+        <MenuItem emoji="📈" color={c.ingreso} titulo="Patrimonio" sub="Cómo evoluciona todo lo que tenés" ruta="/patrimonio" />
+        <MenuItem emoji="🩺" color={c.aviso} titulo="Revisar mis datos" sub="Busca y corrige movimientos mal cargados" ruta="/revisar" ultimo />
+      </MenuGrupo>
+      <MenuGrupo titulo="Herramientas">
+        <MenuItem emoji="🧮" color={c.accent} titulo="Calculadora" sub="Sumá, restá, multiplicá, dividí y sacá porcentajes; llevá el resultado a un movimiento" ruta="/calculadora" ultimo />
+      </MenuGrupo>
+      <MenuGrupo titulo="Control del gasto">
+        <MenuItem emoji="🎯" color={c.gasto} titulo="Presupuestos" sub="Un tope mensual por categoría, con aviso al acercarte" ruta="/presupuestos" />
+        <MenuItem emoji="🗓️" color={c.aviso} titulo="Planificados" sub="Pagos y cobros que sabés que van a llegar" ruta="/planificados" />
+        <MenuItem emoji="🔁" color={c.aviso} titulo="Recurrentes" sub="Sueldo, alquiler y suscripciones que se cargan solos" ruta="/recurrentes" ultimo />
+      </MenuGrupo>
+      <MenuGrupo titulo="Automatizar">
+        <MenuItem emoji="📥" color="#5dade2" titulo="Importar extracto" sub="Excel o CSV de tu banco" ruta="/importar" />
+        <MenuItem emoji="🧠" color="#e056fd" titulo="Reglas automáticas" sub="Si el concepto dice “sube”, categoría Transporte" ruta="/reglas" />
+        <MenuItem emoji="✨" color={c.accent} titulo="Asistente de IA" sub="Sugiere categorías para lo que no se clasificó" ruta="/ia" ultimo />
+      </MenuGrupo>
       {hayServicio && <Notificaciones />}
       {!!sesion && <MercadoPago />}
       {!nubeUid && (
@@ -325,45 +379,11 @@ export default function Ajustes() {
         </Pressable>
       </Card>
 
-      <Card>
-        <Titulo t="🎯 Saldos, presupuestos y ayuda" />
-        <Link href="/importar" asChild>
-          <Pressable style={{ paddingVertical: 10 }}><Text style={{ color: c.text }}>📥 Importar extracto del banco (Excel/CSV) ›</Text></Pressable>
-        </Link>
-        <Link href="/reglas" asChild>
-          <Pressable style={{ paddingVertical: 10 }}><Text style={{ color: c.text }}>🧠 Reglas automáticas por palabra ›</Text></Pressable>
-        </Link>
-        <Link href="/reservas" asChild>
-          <Pressable style={{ paddingVertical: 10 }}><Text style={{ color: c.text }}>🗂️ Reservas: plata apartada para un fin ›</Text></Pressable>
-        </Link>
-        <Link href="/ia" asChild>
-          <Pressable style={{ paddingVertical: 10 }}><Text style={{ color: c.text }}>✨ Asistente de IA (Ollama, gratis) ›</Text></Pressable>
-        </Link>
-        <Link href="/patrimonio" asChild>
-          <Pressable style={{ paddingVertical: 10 }}><Text style={{ color: c.text }}>📈 Patrimonio y su evolución ›</Text></Pressable>
-        </Link>
-        <Link href="/deudas" asChild>
-          <Pressable style={{ paddingVertical: 10 }}><Text style={{ color: c.text }}>🤝 Deudas: lo que debo y lo que me deben ›</Text></Pressable>
-        </Link>
-        <Link href="/planificados" asChild>
-          <Pressable style={{ paddingVertical: 10 }}><Text style={{ color: c.text }}>🗓️ Movimientos planificados ›</Text></Pressable>
-        </Link>
-        <Link href="/cuentas" asChild>
-          <Pressable style={{ paddingVertical: 10 }}><Text style={{ color: c.text }}>🏦 Mis cuentas y saldos por cuenta ›</Text></Pressable>
-        </Link>
-        <Link href="/recurrentes" asChild>
-          <Pressable style={{ paddingVertical: 10 }}><Text style={{ color: c.text }}>🔁 Movimientos recurrentes ›</Text></Pressable>
-        </Link>
-        <Link href="/saldos" asChild>
-          <Pressable style={{ paddingVertical: 10 }}><Text style={{ color: c.text }}>👛 Saldos iniciales por moneda ›</Text></Pressable>
-        </Link>
-        <Link href="/presupuestos" asChild>
-          <Pressable style={{ paddingVertical: 10 }}><Text style={{ color: c.text }}>Editar presupuestos por categoría ›</Text></Pressable>
-        </Link>
-        <Pressable onPress={() => { tap(); mostrarTips(); }} style={{ paddingVertical: 10 }}>
-          <Text style={{ color: c.text }}>💡 Volver a mostrar los consejos</Text>
-        </Pressable>
-      </Card>
+      <BorrarTodo />
+
+      <MenuGrupo titulo="Ayuda">
+        <MenuItem emoji="💡" color={c.ahorro} titulo="Volver a mostrar los consejos" sub="Los avisos con explicaciones que fuiste cerrando" onPress={mostrarTips} ultimo />
+      </MenuGrupo>
     </ScrollView>
   );
 }

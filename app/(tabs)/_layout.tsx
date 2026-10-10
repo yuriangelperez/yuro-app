@@ -17,14 +17,15 @@ export default function TabsLayout() {
         headerStyle: { backgroundColor: c.bg },
         headerTintColor: c.text,
         headerShadowVisible: false,
+        headerTitleStyle: { fontWeight: '700', fontSize: 18 },
         // En compu/tablet ancha: menú lateral con el texto al lado del ícono
         tabBarPosition: escritorio ? 'left' : 'bottom',
         tabBarLabelPosition: escritorio ? 'beside-icon' : 'below-icon',
         tabBarStyle: escritorio
-          ? { backgroundColor: c.card, borderRightColor: c.border, width: 230, paddingTop: 16, paddingHorizontal: 8 }
-          : { backgroundColor: c.card, borderTopColor: c.border, height: 62 + abajo, paddingTop: 6, paddingBottom: abajo + 6 },
+          ? { backgroundColor: c.bg, borderRightColor: c.border, width: 230, paddingTop: 16, paddingHorizontal: 8 }
+          : { backgroundColor: c.bg, borderTopColor: c.card, borderTopWidth: 1, height: 62 + abajo, paddingTop: 6, paddingBottom: abajo + 6, elevation: 0 },
         tabBarVariant: escritorio ? 'material' : 'uikit',
-        tabBarActiveBackgroundColor: escritorio ? c.accent + '26' : undefined,
+        tabBarActiveBackgroundColor: escritorio ? c.card : undefined,
         tabBarActiveTintColor: c.accent,
         tabBarInactiveTintColor: c.muted,
         tabBarLabelStyle: escritorio ? { fontSize: 15, fontWeight: '600' } : { fontSize: 10, fontWeight: '600' },

@@ -154,22 +154,34 @@ async function importarCsv(uid: string, texto: string, token: string, miId: numb
   }
   if (!nuevas.length) return 0;
 
-  // Si ya cargaste a mano ese mismo movimiento no se duplica: mismo importe, método Mercado Pago (o sin método) y misma fecha o un día
-  // de diferencia (el reporte a veces acredita al día siguiente). Cada manual cubre un solo movimiento del reporte.
+  // Si ya cargaste a mano ese mismo movimiento no se duplica. Cada manual cubre un solo movimiento del reporte. Cuenta como "el mismo":
+  //  1) mismo importe, método Mercado Pago (o sin método) y misma fecha o un día de diferencia (el reporte a veces acredita al día siguiente);
+  //  2) mismo importe y día, y a menos de 30 minutos, aunque lo hayas cargado en otra cuenta (ej. un pago de Mercado Pago anotado como Efectivo);
+  //  3) una transferencia entre tus cuentas que toca Mercado Pago por ese importe (ej. sacaste plata de una reserva): es la misma plata.
   // Los que llegaron por notificación sí pasan: el trigger yuro.mp_asociar los vincula al id de Mercado Pago en vez de crear otro.
   const dia = 86400000;
   const fechas = nuevas.map((n) => n.fecha as string).sort();
   const desde = new Date(Date.parse(fechas[0]) - dia).toISOString().slice(0, 10);
   const hasta = new Date(Date.parse(fechas[fechas.length - 1]) + dia).toISOString().slice(0, 10);
-  const { data: previos } = await admin.from('movimientos').select('fecha,valor,metodo').eq('user_id', uid).not('origen', 'in', '(mercadopago,notificacion)').gte('fecha', desde).lte('fecha', hasta);
-  const manuales = (previos ?? [])
-    .filter((p) => !String(p.metodo ?? '').trim() || /mercado/i.test(String(p.metodo)))
-    .map((p) => ({ fecha: p.fecha as string, valor: Number(p.valor), usado: false }));
+  const { data: ctas } = await admin.from('cuentas').select('id,proveedor_id').eq('user_id', uid);
+  const mpIds = new Set((ctas ?? []).filter((c) => c.proveedor_id === 'mercadopago').map((c) => c.id as string));
+  const { data: previos } = await admin.from('movimientos').select('fecha,hora,valor,metodo,tipo,cuenta_id,cuenta_destino_id').eq('user_id', uid).not('origen', 'in', '(mercadopago,notificacion)').gte('fecha', desde).lte('fecha', hasta);
+  const minutos = (h: unknown) => (typeof h === 'string' && /^\d{2}:\d{2}/.test(h) ? +h.slice(0, 2) * 60 + +h.slice(3, 5) : null);
+  const manuales = (previos ?? []).map((p) => ({
+    fecha: p.fecha as string, hora: minutos(p.hora), valor: Number(p.valor), tipo: String(p.tipo), usado: false,
+    mp: !String(p.metodo ?? '').trim() || /mercado/i.test(String(p.metodo)),
+    entraEnMp: mpIds.has(String(p.cuenta_destino_id)), saleDeMp: mpIds.has(String(p.cuenta_id)),
+  }));
   const aInsertar = nuevas.filter((n) => {
     const t = Date.parse(n.fecha as string);
-    // primero el del mismo día; si no, el de un día antes o después
-    const m = manuales.find((x) => !x.usado && x.valor === n.valor && x.fecha === n.fecha)
-      ?? manuales.find((x) => !x.usado && x.valor === n.valor && Math.abs(Date.parse(x.fecha) - t) <= dia);
+    const v = n.valor as number;
+    const hn = minutos(n.hora);
+    const esTransf = (x: (typeof manuales)[number]) => x.tipo === 'Transferencia' && x.fecha === n.fecha && Math.abs(x.valor) === Math.abs(v) && (v > 0 ? x.entraEnMp : x.saleDeMp);
+    const mismoPago = (x: (typeof manuales)[number]) => x.tipo !== 'Transferencia' && x.valor === v;
+    const m = manuales.find((x) => !x.usado && esTransf(x))
+      ?? manuales.find((x) => !x.usado && mismoPago(x) && x.mp && x.fecha === n.fecha)
+      ?? manuales.find((x) => !x.usado && mismoPago(x) && x.fecha === n.fecha && hn !== null && x.hora !== null && Math.abs(x.hora - hn) <= 30)
+      ?? manuales.find((x) => !x.usado && mismoPago(x) && x.mp && Math.abs(Date.parse(x.fecha) - t) <= dia);
     if (m) { m.usado = true; return false; }
     return true;
   });
@@ -201,7 +213,7 @@ async function conectar(uid: string, volver: string) {
 }
 
 // Mercado Pago genera el reporte de forma asíncrona: una llamada lo pide y las siguientes lo descargan cuando está listo.
-async function sincronizar(uid: string) {
+async function sincronizar(uid: string, desdeFecha?: string) {
   const { data } = await admin.from('conexiones_mp').select('*').eq('user_id', uid).maybeSingle();
   if (!data) throw new Error('Mercado Pago no está conectado');
   const con = data as Conexion;
@@ -228,9 +240,11 @@ async function sincronizar(uid: string) {
   // Un reporte solo cubre hasta el momento en que se pidió: siempre se pide uno nuevo para tener lo más reciente
   // (salvo que ya se haya pedido hace menos de 5 minutos y todavía se esté esperando).
   let pidio = false;
-  const hacePoco = !!con.ultimo_reporte_pedido && Date.now() - Date.parse(con.ultimo_reporte_pedido) < 5 * 60_000;
+  // Con "desdeFecha" (YYYY-MM-DD, hora argentina) se pide un reporte desde ese día aunque ya hayas sincronizado: sirve para traer lo anterior (ej. todo el mes)
+  const desdeElegido = desdeFecha && /^\d{4}-\d{2}-\d{2}$/.test(desdeFecha) ? Date.parse(`${desdeFecha}T00:00:00-03:00`) : NaN;
+  const hacePoco = isNaN(desdeElegido) && !!con.ultimo_reporte_pedido && Date.now() - Date.parse(con.ultimo_reporte_pedido) < 5 * 60_000;
   if (!hacePoco) {
-    const desde = con.ultima_sync ? Date.parse(con.ultima_sync) - 2 * 86400_000 : Date.now() - 30 * 86400_000;
+    const desde = !isNaN(desdeElegido) && desdeElegido < Date.now() ? desdeElegido : con.ultima_sync ? Date.parse(con.ultima_sync) - 2 * 86400_000 : Date.now() - 30 * 86400_000;
     const iso = (t: number) => new Date(t).toISOString().replace(/\.\d{3}Z$/, 'Z');
     const p = await mp('/v1/account/release_report', token, { method: 'POST', body: JSON.stringify({ begin_date: iso(desde), end_date: iso(Date.now()) }) });
     if (!p.ok && p.status !== 202) throw await fallo(p, 'No se pudo pedir el reporte');
@@ -246,9 +260,9 @@ Deno.serve(async (req) => {
     const token = req.headers.get('Authorization')?.replace(/^Bearer\s+/i, '') ?? '';
     const { data: u } = await admin.auth.getUser(token);
     if (!u.user) return json({ error: 'Sesión inválida' });
-    const { accion, volver } = await req.json();
+    const { accion, volver, desde } = await req.json();
     if (accion === 'conectar') return json(await conectar(u.user.id, String(volver ?? '')));
-    if (accion === 'sincronizar') return json(await sincronizar(u.user.id));
+    if (accion === 'sincronizar') return json(await sincronizar(u.user.id, typeof desde === 'string' ? desde : undefined));
     if (accion === 'desconectar') {
       await admin.from('conexiones_mp').delete().eq('user_id', u.user.id);
       return json({ ok: true });

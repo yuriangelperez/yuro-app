@@ -3,7 +3,7 @@ import { useMemo, useState } from 'react';
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { avisar } from '../src/alerta';
 import { type Cuenta, emojiCuenta, PROVEEDORES, proveedorDe, TIPOS_CUENTA, type TipoCuenta, tipoSugerido } from '../src/proveedores';
-import { saldosPorCuenta, useFinanzas, useTransferenciasSugeridas } from '../src/store';
+import { saldosPorCuenta, useDepositosReserva, useFinanzas, useTransferenciasSugeridas } from '../src/store';
 import { c } from '../src/theme';
 import type { Moneda } from '../src/types';
 import { Card, centrado, Chip, MAX_FORM, s, SelectorMoneda, tap, Tip, Titulo } from '../src/ui';
@@ -105,18 +105,26 @@ export default function Cuentas() {
   const saldos = useMemo(() => saldosPorCuenta(porAnio, cuentas), [porAnio, cuentas]);
   const activas = cuentas.filter((x) => x.activa);
   const archivadas = cuentas.filter((x) => !x.activa);
+  const totales = useMemo(() => {
+    const suma: Partial<Record<Moneda, number>> = {};
+    for (const x of cuentas.filter((q) => q.activa)) for (const [m, v] of Object.entries(saldos.get(x.id) ?? {})) suma[m as Moneda] = (suma[m as Moneda] ?? 0) + (v as number);
+    return (Object.entries(suma) as [Moneda, number][]).filter(([m, v]) => v !== 0 || m === 'ARS').sort((a, b) => (a[0] === 'ARS' ? -1 : b[0] === 'ARS' ? 1 : 0));
+  }, [cuentas, saldos]);
   const hayTransf = useMemo(() => Object.values(porAnio).flat().some((m) => m.tipo === 'Transferencia'), [porAnio]);
 
   const sugeridas = useTransferenciasSugeridas();
-  const { convertirEnTransferencia, descartarTransferencia } = useFinanzas();
+  const depositos = useDepositosReserva();
+  const { convertirEnTransferencia, convertirEnDeposito, descartarTransferencia } = useFinanzas();
   const nombre = (id?: string | null) => cuentas.find((x) => x.id === id)?.nombre ?? '?';
 
   const Fila = ({ cuenta }: { cuenta: Cuenta }) => {
     const sal = saldos.get(cuenta.id) ?? {};
     const monedas = (Object.keys(sal) as Moneda[]).filter((m) => sal[m] !== 0 || m === cuenta.moneda);
     return (
-      <Pressable onPress={() => { tap(); setEditando(cuenta); }} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, opacity: cuenta.activa ? 1 : 0.55 }}>
-        <Text style={{ fontSize: 26, marginRight: 12 }}>{emojiCuenta(cuenta)}</Text>
+      <Pressable onPress={() => { tap(); setEditando(cuenta); }} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 14, borderBottomWidth: 1, borderBottomColor: c.border, opacity: cuenta.activa ? 1 : 0.55 }}>
+        <View style={{ width: 42, height: 42, borderRadius: 13, backgroundColor: c.card2, alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
+          <Text style={{ fontSize: 22 }}>{emojiCuenta(cuenta)}</Text>
+        </View>
         <View style={{ flex: 1 }}>
           <Text style={s.titulo}>{cuenta.nombre}</Text>
           <Text style={s.sub}>{TIPOS_CUENTA.find((t) => t.t === cuenta.tipo)?.label.replace(/^\S+\s/, '')}</Text>
@@ -168,18 +176,46 @@ export default function Cuentas() {
         </Card>
       )}
 
-      <Card>
-        {activas.length === 0 && <Text style={s.sub}>Todavía no tenés cuentas. Se crean solas con el método de cada movimiento, o podés agregarlas a mano.</Text>}
-        {activas.map((x) => <Fila key={x.id} cuenta={x} />)}
-        <Pressable onPress={() => { tap(); setEditando('nueva'); }} style={{ paddingTop: 12 }}>
-          <Text style={{ color: c.accent, fontWeight: '700' }}>＋ Agregar cuenta</Text>
+      {depositos.length > 0 && (
+        <Card>
+          <Titulo t="🗂️ ¿Es plata que pasaste a una reserva?" sub="Figuran como un gasto de categoría “Reserva”, pero la plata no salió de tu bolsillo: pasó de una cuenta tuya a otra. Si las convertís en transferencia, dejan de contarse como gasto." />
+          {depositos.slice(0, 10).map((d) => (
+            <View key={d.clave} style={{ paddingVertical: 10, borderTopWidth: 1, borderTopColor: c.border }}>
+              <Text style={s.titulo}>{money(-d.mov.valor, d.mov.moneda)} · {fechaCorta(d.mov.fecha)}</Text>
+              <Text style={s.sub} numberOfLines={1}>«{d.mov.concepto}»</Text>
+              <Text style={[s.sub, { marginTop: 2 }]}>Pasaría de {d.origen.nombre} a {d.destino.nombre}</Text>
+              <View style={{ flexDirection: 'row', gap: 16, marginTop: 8 }}>
+                <Pressable onPress={() => { tap(true); convertirEnDeposito(d); }}><Text style={{ color: c.accent, fontWeight: '700' }}>Convertir en transferencia</Text></Pressable>
+                <Pressable onPress={() => { tap(); descartarTransferencia(d.clave); }}><Text style={{ color: c.muted }}>Es un gasto</Text></Pressable>
+              </View>
+            </View>
+          ))}
+        </Card>
+      )}
+
+      {/* Total por moneda, sumando todas las cuentas activas */}
+      <View style={{ marginBottom: 14 }}>
+        <Text style={s.h}>Total en tus cuentas</Text>
+        {totales.length === 0 ? <Text style={s.big}>{money(0, 'ARS')}</Text> : totales.map(([m, v], i) => (
+          <Text key={m} style={i === 0 ? { ...s.big, color: v < 0 ? c.gasto : c.text } : { color: v < 0 ? c.gasto : c.muted, fontSize: 18, fontWeight: '600', marginTop: 2 }}>{money(v, m)}</Text>
+        ))}
+        <Text style={[s.sub, { marginTop: 4 }]}>{activas.length} {activas.length === 1 ? 'cuenta activa' : 'cuentas activas'}</Text>
+      </View>
+      <View style={{ flexDirection: 'row', gap: 10, marginBottom: 16 }}>
+        <Pressable onPress={() => { tap(); setEditando('nueva'); }} style={{ flex: 1, backgroundColor: c.accent, borderRadius: 12, padding: 13, alignItems: 'center' }}>
+          <Text style={{ color: '#fff', fontWeight: '700' }}>＋ Agregar cuenta</Text>
         </Pressable>
         {activas.length >= 2 && (
-          <Pressable onPress={() => { tap(); router.push('/nuevo'); }} style={{ paddingTop: 12 }}>
-            <Text style={{ color: '#5dade2', fontWeight: '700' }}>↔️ Registrar una transferencia{hayTransf ? '' : ' entre cuentas'}</Text>
+          <Pressable onPress={() => { tap(); router.push('/nuevo'); }} style={{ flex: 1, backgroundColor: c.card, borderRadius: 12, padding: 13, alignItems: 'center' }}>
+            <Text style={{ color: '#5dade2', fontWeight: '700' }}>↔️ Transferir{hayTransf ? '' : ' entre cuentas'}</Text>
           </Pressable>
         )}
-      </Card>
+      </View>
+      <Text style={[s.h, { marginLeft: 4, marginBottom: 8 }]}>Cuentas</Text>
+      <View style={{ backgroundColor: c.card, borderRadius: 16, overflow: 'hidden', marginBottom: 16 }}>
+        {activas.length === 0 && <Text style={[s.sub, { padding: 16 }]}>Todavía no tenés cuentas. Se crean solas con el método de cada movimiento, o podés agregarlas a mano.</Text>}
+        {activas.map((x) => <Fila key={x.id} cuenta={x} />)}
+      </View>
 
       {archivadas.length > 0 && (
         <Card>
@@ -189,7 +225,7 @@ export default function Cuentas() {
           {verArchivadas && archivadas.map((x) => <Fila key={x.id} cuenta={x} />)}
         </Card>
       )}
-      <Text style={[s.sub, { marginTop: 4 }]}>Los saldos salen del saldo inicial de cada cuenta más sus movimientos. Los ahorros se cuentan como plata que salió de la cuenta.</Text>
+      <Text style={[s.sub, { marginTop: 4 }]}>Los saldos salen del saldo inicial de cada cuenta más sus movimientos. Un ahorro no cambia el saldo de la cuenta: la plata sigue ahí, solo queda marcada como ahorrada.</Text>
     </ScrollView>
   );
 }

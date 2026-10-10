@@ -3,10 +3,12 @@ import { useMemo, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
 import { Dona, type Porcion } from '../../src/charts';
 import { calcularCuotas } from '../../src/cuotas';
-import { convertir, movimientosDe, saldosAl, useConversor, useFinanzas, useAgenda, useAlertas, useMovimientosMes, useReservas, useResumenDeudas, useTransferenciasSugeridas } from '../../src/store';
+import { convertir, movimientosDe, saldosAl, saldosPorCuenta, useConversor, useFinanzas, useAgenda, useAlertas, useMovimientosMes, useReservas, useResumenDeudas, useTransferenciasSugeridas, useDepositosReserva } from '../../src/store';
 import { c, catInfo } from '../../src/theme';
 import type { Moneda, Movimiento } from '../../src/types';
-import { Barra, Card, Columnas, EstadoSync, Fab, Fila, centrado, MesSelector, SelectorMoneda, Tip, Titulo, s, tap } from '../../src/ui';
+import { Acciones, Barra, Card, Chip, Columnas, EstadoSync, Fab, Fila, Pastilla, Seccion, centrado, MesSelector, SelectorMoneda, Tip, Titulo, s, tap } from '../../src/ui';
+import { calcularQuedaria } from '../../src/proyeccion';
+import { descripcion as descRec, proxima as proxRec, tieneMovimiento } from '../../src/recurrentes';
 import { MESES, diasDelMes, etiquetaMes, fechaCorta, hoyYmd, masReciente, mesActual, money, pct, sumaMes } from '../../src/util';
 
 // Totales del mes convertidos a la moneda de vista
@@ -14,11 +16,13 @@ const totales = (lista: Movimiento[], conv: (v: number, de: Moneda) => number) =
   const suma = (f: (m: Movimiento) => boolean) => lista.filter(f).reduce((a, m) => a + conv(m.valor, m.moneda), 0);
   const porCat: Record<string, number> = {};
   for (const m of lista) if (m.tipo === 'Egreso') porCat[m.categoria || 'Sin categoría'] = (porCat[m.categoria || 'Sin categoría'] ?? 0) - conv(m.valor, m.moneda);
+  const porCatIng: Record<string, number> = {};
+  for (const m of lista) if (m.tipo === 'Ingreso') porCatIng[m.categoria || 'Sin categoría'] = (porCatIng[m.categoria || 'Sin categoría'] ?? 0) + conv(m.valor, m.moneda);
   const ingresos = suma((m) => m.tipo === 'Ingreso');
   const gastos = -suma((m) => m.tipo === 'Egreso');
   const ahorro = -suma((m) => m.tipo === 'Ahorro');
   return {
-    ingresos, gastos, ahorro, porCat,
+    ingresos, gastos, ahorro, porCat, porCatIng,
     libre: ingresos - gastos - ahorro,
     digital: -suma((m) => m.tipo === 'Egreso' && m.metodo !== 'Efectivo'),
     efectivo: -suma((m) => m.tipo === 'Egreso' && m.metodo === 'Efectivo'),
@@ -26,7 +30,7 @@ const totales = (lista: Movimiento[], conv: (v: number, de: Moneda) => number) =
 };
 
 const Mini = ({ emoji, titulo, valor, color, moneda }: { emoji: string; titulo: string; valor: number; color: string; moneda: Moneda }) => (
-  <View style={{ flex: 1, backgroundColor: c.card2, borderRadius: 14, padding: 10 }}>
+  <View style={{ flex: 1, backgroundColor: c.card2, borderRadius: 12, padding: 10 }}>
     <Text style={{ fontSize: 16 }}>{emoji}</Text>
     <Text style={{ color: c.muted, fontSize: 11, marginTop: 4 }}>{titulo}</Text>
     <Text style={{ color, fontWeight: '800', fontSize: 14 }} numberOfLines={1} adjustsFontSizeToFit>{money(valor, moneda)}</Text>
@@ -43,6 +47,8 @@ const Leyenda = ({ color, t }: { color: string; t: string }) => (
 export default function Resumen() {
   const { sincronizando, sincronizar, presupuestos, porAnio, url, setMonedaVista, actualizarCotizaciones, saldosIniciales, ahorrosIniciales, recurrentes, recienGenerados, limpiarGenerados, planificados } = useFinanzas();
   const sugeridas = useTransferenciasSugeridas();
+  const cuentas = useFinanzas((st) => st.cuentas);
+  const depositos = useDepositosReserva();
   const { mes, movimientos: todosDelMes } = useMovimientosMes();
   // Un movimiento con fecha futura (ej. una suscripción cargada para el 28/10) todavía no ocurrió: no cuenta como hecho, queda como pendiente
   const movimientos = useMemo(() => todosDelMes.filter((m) => m.fecha <= hoyYmd()), [todosDelMes]);
@@ -55,12 +61,18 @@ export default function Resumen() {
   const proximos = useMemo(() => [...agenda].sort((a, b) => (a.estado === b.estado ? a.fecha.localeCompare(b.fecha) : a.estado === 'pendiente' ? -1 : 1)).slice(0, 6), [agenda]);
   const { vista, cot, conv, puede } = useConversor();
   const [sel, setSel] = useState<string | null>(null);
+  const [selIng, setSelIng] = useState<string | null>(null);
+  const [conPendIng, setConPendIng] = useState(true); // el gráfico de ingresos suma lo que falta cobrar
+  const [conPendientes, setConPendientes] = useState(true); // el gráfico de gastos suma lo planificado que falta pagar
+  const [oculto, setOculto] = useState(false); // ojito: esconde los importes grandes
   const $ = (n: number) => money(n, vista);
   // Lo que falta cobrar / pagar este mes (planificados y suscripciones pendientes), en la moneda de vista
   const pendientesAgenda = agenda.filter((i) => i.estado === 'pendiente');
-  const porCobrar = pendientesAgenda.filter((i) => i.valor > 0).reduce((a, i) => a + conv(i.valor, i.moneda), 0);
-  const porPagar = -pendientesAgenda.filter((i) => i.valor < 0).reduce((a, i) => a + conv(i.valor, i.moneda), 0);
-  const mostrarProyeccion = mes >= mesActual() && pendientesAgenda.length > 0;
+  // Un mes que todavía no llegó no tiene saldo propio: no se muestra lo que tenés hoy, solo lo que se espera cobrar y pagar
+  const esFuturo = mes > mesActual();
+  const mostrarProyeccion = mes === mesActual() && pendientesAgenda.length > 0;
+  const previstoCobrar = pendientesAgenda.filter((i) => i.valor > 0 && puede(i.moneda)).reduce((a, i) => a + conv(i.valor, i.moneda), 0);
+  const previstoPagar = -pendientesAgenda.filter((i) => i.valor < 0 && puede(i.moneda)).reduce((a, i) => a + conv(i.valor, i.moneda), 0);
 
   const r = useMemo(() => totales(movimientos, conv), [movimientos, vista, cot]); // eslint-disable-line react-hooks/exhaustive-deps
   const prev = useMemo(() => totales(movimientosDe(porAnio, sumaMes(mes, -1)), conv), [porAnio, mes, vista, cot]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -70,6 +82,32 @@ export default function Resumen() {
   const saldos = useMemo(() => saldosAl(porAnio, saldosIniciales, ahorrosIniciales, mes), [porAnio, saldosIniciales, ahorrosIniciales, mes]);
   const delMes = (mon: Moneda) => movimientos.filter((m) => m.moneda === mon && m.tipo !== 'Transferencia').reduce((a, m) => a + m.valor, 0); // una transferencia entre cuentas propias no cambia el total
   const visibles = saldos.filter((x) => x.usada || x.moneda === 'ARS');
+  // Efectivo vs digital según tus cuentas (los movimientos sin cuenta no entran)
+  const { efectivoTotal, digitalTotal } = useMemo(() => {
+    const porCuenta = saldosPorCuenta(porAnio, cuentas);
+    let e = 0, d = 0;
+    // Solo la moneda habitual de cada cuenta (lo que cargás en Efectivo y digital): restos en otra moneda no cuentan
+    for (const x of cuentas.filter((q) => q.activa && puede(q.moneda))) {
+      const v = conv(porCuenta.get(x.id)?.[x.moneda] ?? 0, x.moneda);
+      if (x.tipo === 'cash') e += v; else d += v;
+    }
+    return { efectivoTotal: e, digitalTotal: d };
+  }, [porAnio, cuentas, vista, cot]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Lo que te queda en tus reservas (lo mismo que muestra la tarjeta "Reservas"), por moneda
+  const reservado = useMemo(() => {
+    const out: Partial<Record<Moneda, number>> = {};
+    for (const e of estadosReservas) out[e.reserva.moneda] = (out[e.reserva.moneda] ?? 0) + Math.max(0, e.queda);
+    return out;
+  }, [estadosReservas]);
+  // "Te quedaría": lo que hay hoy en tus cuentas (sin reservas ni Binance) + lo que falta cobrar − lo que falta pagar, con las reservas cubriendo pagos
+  const quedaria = useMemo(
+    () => calcularQuedaria({
+      cuentas, saldos: saldosPorCuenta(porAnio, cuentas), pendientes: pendientesAgenda, recurrentes, conv, puede,
+      ahorrado: Object.fromEntries(saldos.map((x) => [x.moneda, x.ahorrado])),
+      reservado,
+    }),
+    [cuentas, porAnio, pendientesAgenda, recurrentes, saldos, reservado, vista, cot], // eslint-disable-line react-hooks/exhaustive-deps
+  );
   const totalTodo = saldos.reduce((a, x) => a + conv(x.total, x.moneda), 0);
 
   const porciones: Porcion[] = useMemo(
@@ -78,6 +116,53 @@ export default function Resumen() {
   );
 
   // Frases que explican el mes en palabras
+  // Gastos que todavía no pasaron (planificados, programados y suscripciones pendientes), por categoría y en la moneda de vista
+  const pendPorCat = useMemo(() => {
+    const out: Record<string, { valor: number; items: typeof pendientesAgenda }> = {};
+    for (const i of pendientesAgenda) {
+      const rec = i.recurrenteId ? recurrentes.find((x) => x.id === i.recurrenteId) : undefined;
+      const tipo = i.plan?.tipo ?? i.movimiento?.tipo ?? rec?.tipo;
+      if (tipo !== 'Egreso' || i.valor >= 0) continue;
+      const cat = i.plan?.categoria || i.movimiento?.categoria || rec?.categoria || 'Sin categoría';
+      const e = out[cat] ?? { valor: 0, items: [] };
+      e.valor += puede(i.moneda) ? -conv(i.valor, i.moneda) : 0;
+      e.items.push(i);
+      out[cat] = e;
+    }
+    return out;
+  }, [pendientesAgenda, recurrentes, vista, cot]); // eslint-disable-line react-hooks/exhaustive-deps
+  const totalPend = Object.values(pendPorCat).reduce((a, e) => a + e.valor, 0);
+  const porcionesDona: Porcion[] = useMemo(() => {
+    if (!conPendientes) return porciones;
+    const m: Record<string, number> = { ...r.porCat };
+    for (const [cat, e] of Object.entries(pendPorCat)) m[cat] = (m[cat] ?? 0) + e.valor;
+    return Object.entries(m).sort((a, b) => b[1] - a[1]).map(([label, valor]) => ({ label, valor, ...catInfo(label) }));
+  }, [conPendientes, porciones, r, pendPorCat]);
+  const gastosDona = r.gastos + (conPendientes ? totalPend : 0);
+
+  // Ingresos por categoría: lo ya cobrado + (opcional) lo que falta cobrar (planificados, programados y recurrentes de ingreso)
+  const pendIngPorCat = useMemo(() => {
+    const out: Record<string, { valor: number; items: typeof pendientesAgenda }> = {};
+    for (const i of pendientesAgenda) {
+      const rec = i.recurrenteId ? recurrentes.find((x) => x.id === i.recurrenteId) : undefined;
+      const tipo = i.plan?.tipo ?? i.movimiento?.tipo ?? rec?.tipo;
+      if (tipo !== 'Ingreso' || i.valor <= 0) continue;
+      const cat = i.plan?.categoria || i.movimiento?.categoria || rec?.categoria || 'Sin categoría';
+      const e = out[cat] ?? { valor: 0, items: [] };
+      e.valor += puede(i.moneda) ? conv(i.valor, i.moneda) : 0;
+      e.items.push(i);
+      out[cat] = e;
+    }
+    return out;
+  }, [pendientesAgenda, recurrentes, vista, cot]); // eslint-disable-line react-hooks/exhaustive-deps
+  const totalPendIng = Object.values(pendIngPorCat).reduce((a, e) => a + e.valor, 0);
+  const porcionesIng: Porcion[] = useMemo(() => {
+    const m: Record<string, number> = { ...r.porCatIng };
+    if (conPendIng) for (const [cat, e] of Object.entries(pendIngPorCat)) m[cat] = (m[cat] ?? 0) + e.valor;
+    return Object.entries(m).sort((a, b) => b[1] - a[1]).map(([label, valor]) => ({ label, valor, ...catInfo(label) }));
+  }, [conPendIng, r, pendIngPorCat]);
+  const ingresosDona = r.ingresos + (conPendIng ? totalPendIng : 0);
+
   const datos = useMemo(() => {
     const out: { e: string; t: string }[] = [];
     const esActual = mes === mesActual();
@@ -136,48 +221,98 @@ export default function Resumen() {
         )}
 
         <Columnas izq={<>
+        {esFuturo ? (
+          /* Mes que viene: sin saldo, solo lo previsto */
+          <View style={{ marginBottom: 14 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <Text style={{ color: c.muted, fontSize: 13, fontWeight: '500' }}>Previsto para {etiquetaMes(mes)}</Text>
+              <SelectorMoneda valor={vista} onChange={setMonedaVista} chico />
+            </View>
+            <Text style={{ color: previstoCobrar - previstoPagar < 0 ? c.gasto : c.ingreso, fontSize: 38, fontWeight: '700', letterSpacing: -1, marginTop: 4 }} numberOfLines={1} adjustsFontSizeToFit>
+              {previstoCobrar - previstoPagar < 0 ? '−' : '+'}{$(Math.abs(previstoCobrar - previstoPagar))}
+            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
+              <Pastilla texto={`+${$(previstoCobrar)} por cobrar`} positivo />
+              <Pastilla texto={`−${$(previstoPagar)} por pagar`} positivo={false} />
+            </View>
+            <Text style={[s.sub, { marginTop: 8 }]}>Es lo que esperás cobrar y pagar ese mes (planificados, programados y recurrentes). No suma lo que tenés hoy: el saldo de un mes que no llegó todavía no existe.</Text>
+          </View>
+        ) : (
+          <>
+        <View style={{ marginBottom: 14 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Pressable onPress={() => { tap(); setOculto(!oculto); }} hitSlop={10} style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Text style={{ color: c.muted, fontSize: 13, fontWeight: '500' }}>{mes === mesActual() ? 'Dinero total' : `Dinero al cierre de ${etiquetaMes(mes)}`}</Text>
+              <Text style={{ fontSize: 14 }}>{oculto ? '🙈' : '👁️'}</Text>
+            </Pressable>
+            <SelectorMoneda valor={vista} onChange={setMonedaVista} chico />
+          </View>
+          <Text style={{ color: totalTodo < 0 ? c.gasto : c.text, fontSize: 38, fontWeight: '700', letterSpacing: -1, marginTop: 4 }} numberOfLines={1} adjustsFontSizeToFit>
+            {oculto ? '••••••' : $(totalTodo)}
+          </Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6 }}>
+            <Pastilla texto={`${r.libre >= 0 ? '+' : '−'}${oculto ? '••••' : $(Math.abs(r.libre))} este mes`} positivo={r.libre >= 0} />
+            {(cot.USD > 0 || cot.USDT > 0) && <Text style={s.sub}>{cot.USD > 0 ? `USD ${money(cot.USD)}` : ''}{cot.USD > 0 && cot.USDT > 0 ? ' · ' : ''}{cot.USDT > 0 ? `USDT ${money(cot.USDT)}` : ''}</Text>}
+          </View>
+        </View>
+
+          </>
+        )}
+
+        {!esFuturo && (efectivoTotal !== 0 || digitalTotal !== 0) && (
+          <Link href="/efectivo" asChild>
+            <Pressable onPress={() => tap()} style={{ flexDirection: 'row', gap: 10, marginBottom: 14 }}>
+              <View style={{ flex: 1, backgroundColor: c.card, borderRadius: 12, padding: 12 }}>
+                <Text style={s.sub}>💵 Efectivo</Text>
+                <Text style={{ color: c.text, fontWeight: '700', fontSize: 16, marginTop: 2 }} numberOfLines={1} adjustsFontSizeToFit>{oculto ? '••••' : $(efectivoTotal)}</Text>
+              </View>
+              <View style={{ flex: 1, backgroundColor: c.card, borderRadius: 12, padding: 12 }}>
+                <Text style={s.sub}>📱 Digital</Text>
+                <Text style={{ color: c.text, fontWeight: '700', fontSize: 16, marginTop: 2 }} numberOfLines={1} adjustsFontSizeToFit>{oculto ? '••••' : $(digitalTotal)}</Text>
+              </View>
+            </Pressable>
+          </Link>
+        )}
+
+        <Acciones items={[
+          { emoji: '🧮', label: 'Calculadora', ruta: '/calculadora' },
+          { emoji: '💵', label: 'Efectivo', ruta: '/efectivo' },
+          { emoji: '🏦', label: 'Cuentas', ruta: '/cuentas' },
+          { emoji: '🎯', label: 'Presupuestos', ruta: '/presupuestos' },
+          { emoji: '🗓️', label: 'Planificados', ruta: '/planificados' },
+          { emoji: '🗂️', label: 'Reservas', ruta: '/reservas' },
+          { emoji: '🤝', label: 'Deudas', ruta: '/deudas' },
+          { emoji: '📈', label: 'Patrimonio', ruta: '/patrimonio' },
+          { emoji: '🔁', label: 'Recurrentes', ruta: '/recurrentes' },
+        ]} />
+
+        {!esFuturo && (
+          <>
         {/* Tu dinero por moneda */}
         <Card>
-          <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
-            <View style={{ flex: 1 }}>
-              <Titulo t="💰 Tu dinero" sub={mes === mesActual() ? 'Lo que tenés hoy en cada moneda' : `Lo que tenías al cierre de ${etiquetaMes(mes)}`} />
-            </View>
-            <Link href="/patrimonio" asChild>
-              <Pressable onPress={() => tap()} hitSlop={10} style={{ marginRight: 14 }}><Text style={{ color: c.accent, fontWeight: '700' }}>📈</Text></Pressable>
-            </Link>
-            <Link href="/saldos" asChild>
-              <Pressable onPress={() => tap()} hitSlop={10}><Text style={{ color: c.accent, fontWeight: '700' }}>Ajustar</Text></Pressable>
-            </Link>
-          </View>
-          {visibles.map((x) => (
-            <View key={x.moneda} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderTopWidth: 1, borderTopColor: c.border }}>
-              <View style={{ width: 54, paddingVertical: 6, borderRadius: 10, backgroundColor: c.card2, alignItems: 'center', marginRight: 12 }}>
-                <Text style={{ fontSize: 16 }}>{x.moneda === 'ARS' ? '🇦🇷' : x.moneda === 'USD' ? '💵' : '🪙'}</Text>
-                <Text style={{ color: c.text, fontWeight: '800', fontSize: 11 }}>{x.moneda}</Text>
+          <Seccion t="Mis monedas" sub={mes === mesActual() ? 'Lo que tenés hoy en cada moneda' : undefined} accion="Ajustar" ruta="/saldos" />
+          {visibles.map((x, i) => (
+            <View key={x.moneda} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderTopWidth: i ? 1 : 0, borderTopColor: c.border }}>
+              <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: c.card2, alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
+                <Text style={{ fontSize: 18 }}>{x.moneda === 'ARS' ? '🇦🇷' : x.moneda === 'USD' ? '💵' : '🪙'}</Text>
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={{ color: x.total < 0 ? c.gasto : c.text, fontWeight: '800', fontSize: 20 }} numberOfLines={1} adjustsFontSizeToFit>{money(x.total, x.moneda)}</Text>
+                <Text style={{ color: c.text, fontWeight: '600', fontSize: 15 }}>{x.moneda}</Text>
                 <Text style={s.sub} numberOfLines={2}>
-                  Disponible {money(x.disponible, x.moneda)}{x.ahorrado ? ` · 🐷 ahorrado ${money(x.ahorrado, x.moneda)}` : ''}
-                  {delMes(x.moneda) ? ` · este mes ${delMes(x.moneda) > 0 ? '+' : ''}${money(delMes(x.moneda), x.moneda)}` : ''}
+                  Disponible {oculto ? '••••' : money(x.disponible, x.moneda)}{x.ahorrado ? ` · 🐷 ${oculto ? '••••' : money(x.ahorrado, x.moneda)}` : ''}
                 </Text>
               </View>
-              {x.moneda !== vista && puede(x.moneda) && x.total !== 0 && <Text style={{ color: c.muted, fontSize: 12, marginLeft: 6 }}>≈ {$(conv(x.total, x.moneda))}</Text>}
+              <View style={{ alignItems: 'flex-end' }}>
+                <Text style={{ color: x.total < 0 ? c.gasto : c.text, fontWeight: '700', fontSize: 16 }} numberOfLines={1}>{oculto ? '••••••' : money(x.total, x.moneda)}</Text>
+                {x.moneda !== vista && puede(x.moneda) && x.total !== 0 && <Text style={s.sub}>≈ {oculto ? '••••' : $(conv(x.total, x.moneda))}</Text>}
+                {!!delMes(x.moneda) && <Text style={{ color: delMes(x.moneda) > 0 ? c.ingreso : c.gasto, fontSize: 11, marginTop: 2 }}>{delMes(x.moneda) > 0 ? '+' : ''}{oculto ? '••••' : money(delMes(x.moneda), x.moneda)} mes</Text>}
+              </View>
             </View>
           ))}
-          {visibles.length > 1 && (
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderTopWidth: 1, borderTopColor: c.border, paddingTop: 10 }}>
-              <Text style={{ color: c.muted }}>Todo junto en {vista}</Text>
-              <Text style={{ color: c.text, fontWeight: '800', fontSize: 16 }}>{$(totalTodo)}</Text>
-            </View>
-          )}
-          {(cot.USD > 0 || cot.USDT > 0) && (
-            <Text style={[s.sub, { marginTop: 6 }]}>
-              Cotización: {cot.USD > 0 ? `USD ${money(cot.USD)}` : ''}{cot.USD > 0 && cot.USDT > 0 ? ' · ' : ''}{cot.USDT > 0 ? `USDT ${money(cot.USDT)}` : ''}
-            </Text>
-          )}
         </Card>
         <Tip id="saldos" emoji="👛">Acá ves cuánto tenés en cada moneda, sumando todo lo del año. Para que coincida con tu plata real, tocá “Ajustar” y cargá cuánto tenías de cada moneda el 1 de enero.</Tip>
+          </>
+        )}
 
         {/* Reservas */}
         {estadosReservas.length > 0 && (
@@ -200,31 +335,65 @@ export default function Resumen() {
           </Link>
         )}
 
+        {mostrarProyeccion && (
+          <Card style={{ borderColor: (quedaria.queda < 0 ? c.gasto : c.ingreso) + '55', paddingVertical: 20 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <Text style={{ color: c.muted, fontSize: 14, fontWeight: '600' }}>💰 Tu plata</Text>
+              <Link href="/efectivo" asChild>
+                <Pressable onPress={() => tap()} hitSlop={8}><Text style={{ color: c.accent, fontSize: 12, fontWeight: '600' }}>Ver por cuenta ›</Text></Pressable>
+              </Link>
+            </View>
+
+            {/* Dos números distintos: lo que tenés hoy y lo que te va a quedar después de cobrar y pagar */}
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 12 }}>
+              <View style={{ flexGrow: 1, flexBasis: 200, backgroundColor: c.card2, borderRadius: 14, padding: 14 }}>
+                <Text style={{ color: c.muted, fontSize: 13, fontWeight: '600' }}>🏠 Tenés hoy</Text>
+                <Text style={{ color: quedaria.libreHoy < 0 ? c.gasto : c.text, fontSize: 34, fontWeight: '800', letterSpacing: -1, marginTop: 4 }} numberOfLines={1} adjustsFontSizeToFit>{oculto ? '••••••' : $(quedaria.libreHoy)}</Text>
+                <Text style={{ color: c.muted, fontSize: 11, marginTop: 2 }}>efectivo y billeteras, sin reservas ni Binance</Text>
+              </View>
+              <View style={{ flexGrow: 1, flexBasis: 200, backgroundColor: (quedaria.queda < 0 ? c.gasto : c.ingreso) + '1f', borderRadius: 14, padding: 14 }}>
+                <Text style={{ color: c.muted, fontSize: 13, fontWeight: '600' }}>🔮 Te quedaría después</Text>
+                <Text style={{ color: quedaria.queda < 0 ? c.gasto : c.ingreso, fontSize: 34, fontWeight: '800', letterSpacing: -1, marginTop: 4 }} numberOfLines={1} adjustsFontSizeToFit>{oculto ? '••••••' : $(quedaria.queda)}</Text>
+                <Text style={{ color: c.muted, fontSize: 11, marginTop: 2 }}>de cobrar y pagar {pendientesAgenda.length} {pendientesAgenda.length === 1 ? 'pendiente' : 'pendientes'}</Text>
+              </View>
+            </View>
+
+            {/* Qué pasa entre uno y otro */}
+            <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
+              <View style={{ flex: 1, backgroundColor: c.card2, borderRadius: 12, padding: 12 }}>
+                <Text style={{ color: c.muted, fontSize: 12 }}>⏳ Por cobrar</Text>
+                <Text style={{ color: c.ingreso, fontWeight: '800', fontSize: 16, marginTop: 4 }} numberOfLines={1} adjustsFontSizeToFit>+{oculto ? '••••' : $(quedaria.porCobrar)}</Text>
+              </View>
+              <View style={{ flex: 1, backgroundColor: c.card2, borderRadius: 12, padding: 12 }}>
+                <Text style={{ color: c.muted, fontSize: 12 }}>⏳ Por pagar</Text>
+                <Text style={{ color: c.gasto, fontWeight: '800', fontSize: 16, marginTop: 4 }} numberOfLines={1} adjustsFontSizeToFit>−{oculto ? '••••' : $(quedaria.porPagar)}</Text>
+              </View>
+            </View>
+
+            {(quedaria.cubiertoReservas !== 0 || quedaria.aparte !== 0) && (
+              <View style={{ marginTop: 12, gap: 4 }}>
+                {quedaria.cubiertoReservas !== 0 && (
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                    <Text style={{ color: c.muted, fontSize: 12 }}>🗂️ Se paga con tus reservas</Text>
+                    <Text style={{ color: c.muted, fontSize: 12, fontWeight: '600' }}>{quedaria.cubiertoReservas > 0 ? '+' : '−'}{$(Math.abs(quedaria.cubiertoReservas))}</Text>
+                  </View>
+                )}
+                {quedaria.aparte !== 0 && (
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                    <Text style={{ color: c.muted, fontSize: 12, flex: 1 }}>🪙 Sale de Binance, no es plata para gastar</Text>
+                    <Text style={{ color: c.muted, fontSize: 12, fontWeight: '600' }}>{quedaria.aparte > 0 ? '+' : '−'}{$(Math.abs(quedaria.aparte))}</Text>
+                  </View>
+                )}
+              </View>
+            )}
+            <Text style={{ color: c.muted, fontSize: 11, marginTop: 10, lineHeight: 15 }}>Tenés hoy es lo que hay ahora. Te quedaría es lo que va a haber cuando se cobre y se pague lo pendiente. Los totales por cobrar y por pagar son los mismos de Planificados.</Text>
+          </Card>
+        )}
+
         {/* Balance */}
         <Card>
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-            <Text style={[s.h, { marginBottom: 0 }]}>Dinero libre del mes</Text>
-            <SelectorMoneda valor={vista} onChange={setMonedaVista} chico />
-          </View>
-          <Text style={{ ...s.big, color: r.libre < 0 ? c.gasto : c.text }}>{$(r.libre)}</Text>
-          {mostrarProyeccion && (
-            <View style={{ backgroundColor: c.card2, borderRadius: 12, padding: 12, marginTop: 10 }}>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                <Text style={{ color: c.muted }}>⏳ Por cobrar</Text>
-                <Text style={{ color: c.ingreso, fontWeight: '700' }}>+{$(porCobrar)}</Text>
-              </View>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 }}>
-                <Text style={{ color: c.muted }}>⏳ Por pagar</Text>
-                <Text style={{ color: c.gasto, fontWeight: '700' }}>−{$(porPagar)}</Text>
-              </View>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', borderTopWidth: 1, borderTopColor: c.border, marginTop: 8, paddingTop: 8 }}>
-                <Text style={{ color: c.text, fontWeight: '700' }}>Te quedaría</Text>
-                <Text style={{ color: r.libre + porCobrar - porPagar < 0 ? c.gasto : c.ingreso, fontWeight: '800', fontSize: 20 }}>{$(r.libre + porCobrar - porPagar)}</Text>
-              </View>
-              <Text style={{ color: c.muted, fontSize: 11, marginTop: 4 }}>Después de cobrar y pagar {pendientesAgenda.length} {pendientesAgenda.length === 1 ? 'pendiente' : 'pendientes'} (planificados y suscripciones).</Text>
-            </View>
-          )}
-          <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
+          <Titulo t="📅 Cómo se movió el mes" sub="Lo que entró y salió este mes según tus movimientos. No es tu saldo: lo que podés gastar está arriba, en “Lo que te queda”." />
+          <View style={{ flexDirection: 'row', gap: 8 }}>
             <Mini emoji="⬆️" titulo="Ingresos" valor={r.ingresos} color={c.ingreso} moneda={vista} />
             <Mini emoji="⬇️" titulo="Gastos" valor={r.gastos} color={c.gasto} moneda={vista} />
             <Mini emoji="🐷" titulo="Ahorro" valor={r.ahorro} color={c.ahorro} moneda={vista} />
@@ -248,29 +417,38 @@ export default function Resumen() {
             </Text>
           )}
         </Card>
-        <Tip id="libre">“Dinero libre” es lo que te queda: ingresos − gastos − ahorro. “Te quedaría” le suma lo que falta cobrar y le resta lo que falta pagar (planificados y suscripciones). Si se pone en rojo, gastaste más de lo que entró. Con ARS / USD / USDT elegís en qué moneda ver los totales.</Tip>
+        <Tip id="libre">“Te quedaría” parte de lo que hay en tus cuentas (sin reservas ni Binance), suma lo que falta cobrar y resta lo que falta pagar. Con ARS / USD / USDT elegís en qué moneda ver los totales.</Tip>
 
 
         {/* Torta de gastos */}
         <Card>
           <Titulo t="¿En qué se fue tu plata?" sub="Tocá una porción o una categoría para ver el detalle" />
-          {porciones.length === 0 ? (
+          {totalPend > 0 && (
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 4 }}>
+              <Chip label={conPendientes ? `✓ Con pendientes (+${$(totalPend)})` : `Con pendientes (+${$(totalPend)})`} on={conPendientes} onPress={() => setConPendientes(!conPendientes)} />
+            </View>
+          )}
+          {porcionesDona.length === 0 ? (
             <Text style={{ color: c.muted, textAlign: 'center', paddingVertical: 24 }}>Sin gastos este mes 🎉</Text>
           ) : (
             <>
-              <Dona data={porciones} sel={sel} onSel={setSel} moneda={vista} />
+              <Dona data={porcionesDona} sel={sel} onSel={setSel} moneda={vista} />
               <View style={{ marginTop: 12 }}>
-                {porciones.map((p) => {
+                {porcionesDona.map((p) => {
                   const activo = sel === p.label;
+                  const pend = conPendientes ? pendPorCat[p.label]?.valor ?? 0 : 0;
                   return (
                     <Pressable key={p.label} onPress={() => { tap(); setSel(activo ? null : p.label); }} style={{ paddingVertical: 8, paddingHorizontal: 8, borderRadius: 10, backgroundColor: activo ? c.card2 : 'transparent', opacity: sel && !activo ? 0.5 : 1 }}>
                       <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
                         <Text style={{ fontSize: 16, marginRight: 8 }}>{p.emoji}</Text>
-                        <Text style={{ color: c.text, flex: 1 }}>{p.label}</Text>
-                        <Text style={{ color: c.muted, marginRight: 8 }}>{pct(p.valor, r.gastos)}%</Text>
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ color: c.text }}>{p.label}</Text>
+                          {pend > 0 && <Text style={{ color: c.aviso, fontSize: 11 }}>⏳ incluye {$(pend)} pendiente</Text>}
+                        </View>
+                        <Text style={{ color: c.muted, marginRight: 8 }}>{pct(p.valor, gastosDona)}%</Text>
                         <Text style={{ color: c.text, fontWeight: '700' }}>{$(p.valor)}</Text>
                       </View>
-                      <Barra valor={pct(p.valor, porciones[0].valor)} color={p.color} alto={6} />
+                      <Barra valor={pct(p.valor, porcionesDona[0].valor)} color={p.color} alto={6} />
                     </Pressable>
                   );
                 })}
@@ -278,6 +456,68 @@ export default function Resumen() {
               {sel && (
                 <View style={{ marginTop: 8, borderTopWidth: 1, borderTopColor: c.border, paddingTop: 4 }}>
                   {movimientos.filter((m) => m.tipo === 'Egreso' && (m.categoria || 'Sin categoría') === sel).sort((a, b) => conv(a.valor, a.moneda) - conv(b.valor, b.moneda)).map((m) => <Fila key={m.id} m={m} />)}
+                  {conPendientes && (pendPorCat[sel]?.items ?? []).map((i) => (
+                    <View key={i.id} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 14 }}>
+                      <Text style={{ width: 28, fontSize: 16 }}>⏳</Text>
+                      <View style={{ flex: 1 }}>
+                        <Text style={s.titulo} numberOfLines={1}>{i.concepto}</Text>
+                        <Text style={s.sub}>Pendiente · {fechaCorta(i.fecha)}</Text>
+                      </View>
+                      <Text style={{ color: c.aviso, fontWeight: '700' }}>{money(i.valor, i.moneda)}</Text>
+                    </View>
+                  ))}
+                </View>
+              )}
+            </>
+          )}
+        </Card>
+
+        {/* Ingresos por categoría */}
+        <Card>
+          <Titulo t="¿De dónde vino tu plata?" sub="Tus ingresos del mes por categoría. Tocá una para ver el detalle" />
+          {totalPendIng > 0 && (
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 4 }}>
+              <Chip label={conPendIng ? `✓ Con lo que falta cobrar (+${$(totalPendIng)})` : `Con lo que falta cobrar (+${$(totalPendIng)})`} on={conPendIng} onPress={() => setConPendIng(!conPendIng)} />
+            </View>
+          )}
+          {porcionesIng.length === 0 ? (
+            <Text style={{ color: c.muted, textAlign: 'center', paddingVertical: 24 }}>Todavía no entró nada este mes</Text>
+          ) : (
+            <>
+              <Dona data={porcionesIng} sel={selIng} onSel={setSelIng} moneda={vista} />
+              <View style={{ marginTop: 12 }}>
+                {porcionesIng.map((p) => {
+                  const activo = selIng === p.label;
+                  const pend = conPendIng ? pendIngPorCat[p.label]?.valor ?? 0 : 0;
+                  return (
+                    <Pressable key={p.label} onPress={() => { tap(); setSelIng(activo ? null : p.label); }} style={{ paddingVertical: 8, paddingHorizontal: 8, borderRadius: 10, backgroundColor: activo ? c.card2 : 'transparent', opacity: selIng && !activo ? 0.5 : 1 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                        <Text style={{ fontSize: 16, marginRight: 8 }}>{p.emoji}</Text>
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ color: c.text }}>{p.label}</Text>
+                          {pend > 0 && <Text style={{ color: c.aviso, fontSize: 11 }}>⏳ incluye {$(pend)} por cobrar</Text>}
+                        </View>
+                        <Text style={{ color: c.muted, marginRight: 8 }}>{pct(p.valor, ingresosDona)}%</Text>
+                        <Text style={{ color: c.ingreso, fontWeight: '700' }}>{$(p.valor)}</Text>
+                      </View>
+                      <Barra valor={pct(p.valor, porcionesIng[0].valor)} color={p.color} alto={6} />
+                    </Pressable>
+                  );
+                })}
+              </View>
+              {selIng && (
+                <View style={{ marginTop: 8, borderTopWidth: 1, borderTopColor: c.border, paddingTop: 4 }}>
+                  {movimientos.filter((m) => m.tipo === 'Ingreso' && (m.categoria || 'Sin categoría') === selIng).sort((a, b) => conv(b.valor, b.moneda) - conv(a.valor, a.moneda)).map((m) => <Fila key={m.id} m={m} />)}
+                  {conPendIng && (pendIngPorCat[selIng]?.items ?? []).map((i) => (
+                    <View key={i.id} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 14 }}>
+                      <Text style={{ width: 28, fontSize: 16 }}>⏳</Text>
+                      <View style={{ flex: 1 }}>
+                        <Text style={s.titulo} numberOfLines={1}>{i.concepto}</Text>
+                        <Text style={s.sub}>Por cobrar · {fechaCorta(i.fecha)}</Text>
+                      </View>
+                      <Text style={{ color: c.aviso, fontWeight: '700' }}>{money(i.valor, i.moneda)}</Text>
+                    </View>
+                  ))}
                 </View>
               )}
             </>
@@ -321,6 +561,14 @@ export default function Resumen() {
         )}
 
         {/* Posibles transferencias entre cuentas propias */}
+        {depositos.length > 0 && (
+          <Link href="/cuentas" asChild>
+            <Pressable onPress={() => tap()} style={s.tip}>
+              <Text style={{ fontSize: 20, marginRight: 10 }}>🗂️</Text>
+              <Text style={{ color: c.text, flex: 1 }}>{depositos.length === 1 ? 'Un gasto de “Reserva” parece plata que pasaste a una reserva' : `${depositos.length} gastos de “Reserva” parecen plata que pasaste a una reserva`}. Tocá para pasarlos a transferencia: no son gastos.</Text>
+            </Pressable>
+          </Link>
+        )}
         {sugeridas.length > 0 && (
           <Link href="/cuentas" asChild>
             <Pressable onPress={() => tap()} style={s.tip}>
@@ -374,15 +622,16 @@ export default function Resumen() {
         <Link href="/recurrentes" asChild>
           <Pressable onPress={() => tap()} style={s.card}>
             <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
-              <View style={{ flex: 1 }}><Titulo t="🔁 Recurrentes" sub={recurrentes.length ? 'Se cargan solos cada mes' : 'Sueldo, suscripciones, alquiler: cargalos una vez y se repiten solos'} /></View>
+              <View style={{ flex: 1 }}><Titulo t="🔁 Recurrentes" sub={recurrentes.length ? 'Se cargan solos: cada mes, quincena o semana' : 'Sueldo, suscripciones, alquiler: cargalos una vez y se repiten solos'} /></View>
               <Text style={{ color: c.accent, fontWeight: '700' }}>{recurrentes.length ? 'Ver ›' : 'Crear ›'}</Text>
             </View>
             {recurrentes.filter((r) => r.activo).sort((a, b) => a.dia - b.dia).slice(0, 4).map((r) => {
-              const cargado = !!r.ultimoYm && r.ultimoYm >= mesActual();
+              const noMensual = (r.frecuencia ?? 'mensual') !== 'mensual';
+              const cargado = noMensual ? !proxRec(r, hoyYmd(), r.ultimaFecha)?.startsWith(mesActual()) : tieneMovimiento(r, todosDelMes);
               return (
                 <View key={r.id} style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6 }}>
                   <Text style={{ width: 22 }}>{cargado ? '✅' : '⏳'}</Text>
-                  <Text style={{ color: c.text, flex: 1 }} numberOfLines={1}>{r.concepto} <Text style={{ color: c.muted, fontSize: 12 }}>· día {r.dia}</Text></Text>
+                  <Text style={{ color: c.text, flex: 1 }} numberOfLines={1}>{r.concepto} <Text style={{ color: c.muted, fontSize: 12 }}>· {noMensual ? descRec(r).toLowerCase() : `día ${r.dia}`}</Text></Text>
                   <Text style={{ color: r.tipo === 'Ingreso' ? c.ingreso : c.muted, fontWeight: '600' }}>{money(r.valor, r.moneda)}</Text>
                 </View>
               );

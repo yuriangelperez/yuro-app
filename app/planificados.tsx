@@ -2,7 +2,7 @@ import { router } from 'expo-router';
 import { useMemo, useState } from 'react';
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { avisar, confirmar } from '../src/alerta';
-import type { Planificado } from '../src/planificados';
+import { type Planificado, sugerirEmparejamientos } from '../src/planificados';
 import { type ItemAgenda, useAgenda, useConversor, useFinanzas } from '../src/store';
 import { c } from '../src/theme';
 import type { Moneda } from '../src/types';
@@ -140,7 +140,7 @@ const ItemOtro = ({ i }: { i: ItemAgenda }) => {
       <View style={{ flex: 1 }}>
         <Text style={s.titulo} numberOfLines={1}>{i.concepto} <Text style={{ color: c.muted, fontSize: 12 }}>✏️</Text></Text>
         <Text style={[s.sub, atrasado && { color: c.aviso }]}>
-          {i.estado === 'cumplido' ? `✅ ${i.valor > 0 ? 'Cobrado' : 'Pagado'}` : `${atrasado ? '⚠️ Todavía no llegó · ' : ''}${cuando(i.fecha)}`} · {fechaCorta(i.fecha)} · {i.origen === 'recurrente' ? '🔁 Se repite todos los meses' : 'Movimiento con fecha futura'}
+          {i.estado === 'cumplido' ? `✅ ${i.valor > 0 ? 'Cobrado' : 'Pagado'}` : `${atrasado ? '⚠️ Todavía no llegó · ' : ''}${cuando(i.fecha)}`} · {fechaCorta(i.fecha)} · {i.origen === 'recurrente' ? '🔁 Recurrente' : 'Movimiento con fecha futura'}
         </Text>
       </View>
       <Text style={{ color: i.valor > 0 ? c.ingreso : c.gasto, fontWeight: '700' }}>{money(i.valor, i.moneda)}</Text>
@@ -152,6 +152,9 @@ export default function Planificados() {
   const planificados = useFinanzas((st) => st.planificados);
   const mes = useFinanzas((st) => st.mes);
   const { conv, vista } = useConversor();
+  const porAnio = useFinanzas((st) => st.porAnio);
+  const descartadas = useFinanzas((st) => st.transferenciasDescartadas);
+  const { cumplirPlanificadoCon, descartarTransferencia, guardar } = useFinanzas();
   const [nuevo, setNuevo] = useState(false);
   const [editando, setEditando] = useState<Planificado | null>(null);
 
@@ -163,6 +166,14 @@ export default function Planificados() {
   const entra = pendientes.filter((p) => p.valor > 0).reduce((a, p) => a + conv(p.valor, p.moneda), 0);
   const sale = pendientes.filter((p) => p.valor < 0).reduce((a, p) => a + conv(p.valor, p.moneda), 0);
   const formAbierto = nuevo || editando;
+
+  // Movimientos que llegaron y podrían ser lo que esperabas, pero no coinciden lo bastante como para marcarlo solos
+  const parecidos = useMemo(() => {
+    const ocupados = new Set(planificados.map((p) => p.movimientoId).filter(Boolean));
+    const libres = Object.values(porAnio).flat().filter((m) => !ocupados.has(m.id) && m.fecha >= ymdMenos(45) && m.fecha <= hoyYmd());
+    return sugerirEmparejamientos(planificados.filter((p) => p.estado === 'pendiente'), libres).filter((x) => !descartadas.includes(`emp|${x.plan.id}|${x.mov.id}`));
+  }, [planificados, porAnio, descartadas]);
+  const [nombres, setNombres] = useState<Record<string, string>>({});
 
   return (
     <ScrollView style={{ backgroundColor: c.bg }} contentContainerStyle={{ paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
@@ -177,6 +188,33 @@ export default function Planificados() {
           <Pressable onPress={() => { tap(); setNuevo(true); }} style={{ backgroundColor: c.accent, borderRadius: 12, padding: 14, alignItems: 'center', marginBottom: 12 }}>
             <Text style={{ color: '#fff', fontWeight: '800' }}>＋ Planificar un movimiento</Text>
           </Pressable>
+        )}
+        {parecidos.length > 0 && !formAbierto && (
+          <Card>
+            <Titulo t={`🔗 ¿Llegó lo que esperabas? (${parecidos.length})`} sub="Llegó un movimiento parecido a algo planificado, pero no tan seguro como para marcarlo solo. Confirmalo y, si querés, cambiale el nombre." />
+            {parecidos.map(({ plan, mov }) => {
+              const k = `${plan.id}|${mov.id}`;
+              return (
+                <View key={k} style={{ paddingVertical: 10, borderTopWidth: 1, borderTopColor: c.border }}>
+                  <Text style={s.sub}>Esperabas: {plan.concepto} · {money(plan.valor, plan.moneda)} · {fechaCorta(plan.fecha)}</Text>
+                  <Text style={s.titulo} numberOfLines={1}>Llegó: {mov.concepto} · {money(mov.valor, mov.moneda)} · {fechaCorta(mov.fecha)}</Text>
+                  <TextInput
+                    style={{ backgroundColor: c.card2, color: c.text, borderRadius: 10, padding: 10, fontSize: 15, marginTop: 8 }}
+                    placeholder="Nombre" placeholderTextColor={c.muted} value={nombres[k] ?? plan.concepto} onChangeText={(x) => setNombres((n) => ({ ...n, [k]: x }))}
+                  />
+                  <View style={{ flexDirection: 'row', gap: 18, marginTop: 8 }}>
+                    <Pressable onPress={async () => {
+                      tap(true);
+                      if (!(await cumplirPlanificadoCon(plan.id, mov.id))) return avisar('Ese movimiento todavía no se subió a la nube: probá de nuevo en unos segundos.');
+                      const nombre = (nombres[k] ?? plan.concepto).trim();
+                      if (nombre !== mov.concepto || (!mov.categoria && plan.categoria)) await guardar({ ...mov, concepto: nombre || mov.concepto, categoria: mov.categoria || plan.categoria, categoria2: mov.categoria2 || plan.categoria2 });
+                    }}><Text style={{ color: c.accent, fontWeight: '700' }}>Sí, es este</Text></Pressable>
+                    <Pressable onPress={() => { tap(); descartarTransferencia(`emp|${plan.id}|${mov.id}`); }}><Text style={{ color: c.muted }}>No</Text></Pressable>
+                  </View>
+                </View>
+              );
+            })}
+          </Card>
         )}
         <Card>
           <Titulo t={`Pendientes de ${etiquetaMes(mes)}`} sub={pendientes.length ? `Por cobrar ${money(entra, vista)} · Por pagar ${money(-sale, vista)}` : 'No tenés nada pendiente este mes'} />

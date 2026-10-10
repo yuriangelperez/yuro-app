@@ -39,5 +39,6 @@ export async function conectarMp(): Promise<'ok' | 'cancelado' | 'redirigido'> {
   return 'ok';
 }
 
-export const sincronizarMp = () => llamar<{ nuevos: number; estado: 'ok' | 'generando'; pidioNuevo: boolean }>('sincronizar');
+// desde (YYYY-MM-DD): pide el reporte desde ese día en vez de solo los últimos 2 días
+export const sincronizarMp = (desde?: string) => llamar<{ nuevos: number; estado: 'ok' | 'generando'; pidioNuevo: boolean }>('sincronizar', desde ? { desde } : {});
 export const desconectarMp = () => llamar<{ ok: boolean }>('desconectar');

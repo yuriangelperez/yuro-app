@@ -21,11 +21,18 @@ export default function Estadisticas() {
     const meses = Array.from({ length: 12 }, (_, i) => ({ ym: `${anio}-${p2(i + 1)}`, ingresos: 0, gastos: 0, ahorro: 0 }));
     const cat: Record<string, number> = {};
     const catMes: Record<string, number> = {};
+    const catIng: Record<string, number> = {};
+    const catIngMes: Record<string, number> = {};
     const met: Record<string, number> = {};
     for (const m of lista) {
       const v = conv(m.valor, m.moneda);
       const b = meses[+m.fecha.slice(5, 7) - 1];
-      if (m.tipo === 'Ingreso') b.ingresos += v;
+      if (m.tipo === 'Ingreso') {
+        b.ingresos += v;
+        const k = m.categoria || 'Sin categoría';
+        catIng[k] = (catIng[k] ?? 0) + v;
+        if (m.fecha.startsWith(mes)) catIngMes[k] = (catIngMes[k] ?? 0) + v;
+      }
       if (m.tipo === 'Ahorro') b.ahorro -= v;
       if (m.tipo === 'Egreso') {
         b.gastos -= v;
@@ -42,13 +49,15 @@ export default function Estadisticas() {
     const peor = [...conDatos].sort((a, b) => b.gastos - a.gastos)[0];
     const mejor = [...conDatos].sort((a, b) => b.ingresos - b.gastos - b.ahorro - (a.ingresos - a.gastos - a.ahorro))[0];
     const orden = (o: Record<string, number>) => Object.entries(o).sort((a, b) => b[1] - a[1]);
-    return { meses, tot, conDatos, peor, mejor, cat: orden(cat), catMes: orden(catMes), met: orden(met) };
+    return { meses, tot, conDatos, peor, mejor, cat: orden(cat), catMes: orden(catMes), catIng: orden(catIng), catIngMes: orden(catIngMes), met: orden(met) };
   }, [porAnio, anio, mes, vista, cot]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const sel = d.meses[+mes.slice(5) - 1];
   const metodos: Porcion[] = d.met.map(([label, valor]) => ({ label, valor, ...metInfo(label) }));
   const cats = vistaCat === 'anio' ? d.cat : d.catMes;
   const totalCats = cats.reduce((a, x) => a + x[1], 0);
+  const catsIng = vistaCat === 'anio' ? d.catIng : d.catIngMes;
+  const totalCatsIng = catsIng.reduce((a, x) => a + x[1], 0);
 
   return (
     <ScrollView style={{ flex: 1, backgroundColor: c.bg }} contentContainerStyle={{ padding: 16, paddingBottom: 40, ...centrado() }} refreshControl={<RefreshControl refreshing={sincronizando} onRefresh={sincronizar} tintColor={c.text} />}>
@@ -118,6 +127,23 @@ export default function Estadisticas() {
               <Text style={{ color: c.text, fontWeight: '700' }}>{$(v)}</Text>
             </View>
             <Barra valor={pct(v, cats[0][1])} color={catInfo(cat).color} alto={6} />
+          </View>
+        ))}
+      </Card>
+
+      <Card>
+        <Titulo t="💰 Ranking de ingresos" sub={vistaCat === 'anio' ? `De dónde vino tu plata en ${anio}` : `De dónde vino tu plata en ${etiquetaMes(mes)}`} />
+        {catsIng.length === 0 && <Text style={{ color: c.muted }}>Sin ingresos</Text>}
+        {catsIng.map(([cat, v], i) => (
+          <View key={cat} style={{ marginTop: 10 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+              <Text style={{ color: c.muted, width: 22 }}>{i + 1}.</Text>
+              <Text style={{ fontSize: 16, marginRight: 8 }}>{catInfo(cat).emoji}</Text>
+              <Text style={{ color: c.text, flex: 1 }}>{cat}</Text>
+              <Text style={{ color: c.muted, marginRight: 8 }}>{pct(v, totalCatsIng)}%</Text>
+              <Text style={{ color: c.ingreso, fontWeight: '700' }}>{$(v)}</Text>
+            </View>
+            <Barra valor={pct(v, catsIng[0][1])} color={catInfo(cat).color} alto={6} />
           </View>
         ))}
       </Card>

@@ -1,22 +1,32 @@
 import { router } from 'expo-router';
+import { useMemo } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
+import { avisar } from '../src/alerta';
 import { type Recurrente, useConversor, useFinanzas } from '../src/store';
 import { c } from '../src/theme';
+import { descripcion, faltaCargar, proxima, tieneMovimiento, vecesPorMes } from '../src/recurrentes';
 import { Avatar, Card, centrado, MAX_FORM, s, tap, Tip, Titulo } from '../src/ui';
-import { diasDelMes, hoyYmd, mesActual, money } from '../src/util';
+import { diasDelMes, fechaCorta, hoyYmd, mesActual, money } from '../src/util';
 
 // Estado de este mes: ya cargado, o en qué día se carga
-const estado = (r: Recurrente) => {
+const estado = (r: Recurrente, movsMes: { tipo: string; concepto: string }[]) => {
   if (!r.activo) return { t: '⏸ Pausado', col: c.muted };
+  if ((r.frecuencia ?? 'mensual') !== 'mensual') {
+    const prox = proxima(r, hoyYmd(), r.ultimaFecha);
+    return { t: prox ? `⏳ Próxima: ${fechaCorta(prox)}` : '✅ Al día', col: c.aviso };
+  }
   const ym = mesActual();
-  if (r.ultimoYm && r.ultimoYm >= ym) return { t: '✅ Cargado este mes', col: c.ingreso };
+  if (tieneMovimiento(r, movsMes)) return { t: '✅ Cargado este mes', col: c.ingreso };
   const dia = Math.min(r.dia, diasDelMes(ym));
+  if (faltaCargar(r, movsMes, hoyYmd())) return { t: '⚠️ Falta cargar este mes', col: c.gasto };
   const faltan = dia - +hoyYmd().slice(8);
   return { t: faltan <= 0 ? '⏳ Se carga al abrir la app' : faltan === 1 ? '⏳ Se carga mañana' : `⏳ Se carga el día ${dia} (en ${faltan} días)`, col: c.aviso };
 };
 
-const Fila = ({ r }: { r: Recurrente }) => {
-  const e = estado(r);
+const Fila = ({ r, movsMes }: { r: Recurrente; movsMes: { tipo: string; concepto: string }[] }) => {
+  const e = estado(r, movsMes);
+  const cargarAhora = useFinanzas((st) => st.cargarRecurrenteAhora);
+  const sinCargar = r.activo && !tieneMovimiento(r, movsMes);
   return (
     <Pressable
       onPress={() => { tap(); router.push({ pathname: '/recurrente', params: { id: r.id } }); }}
@@ -25,8 +35,13 @@ const Fila = ({ r }: { r: Recurrente }) => {
       <Avatar categoria={r.categoria || (r.tipo === 'Ahorro' ? 'Ahorro' : '')} size={38} />
       <View style={{ flex: 1, marginLeft: 10 }}>
         <Text style={s.titulo} numberOfLines={1}>{r.concepto}</Text>
-        <Text style={s.sub}>Día {r.dia} · {r.metodo}</Text>
+        <Text style={s.sub}>{descripcion(r)} · {r.metodo}</Text>
         <Text style={{ color: e.col, fontSize: 12, marginTop: 2 }}>{e.t}</Text>
+        {sinCargar && (
+          <Pressable onPress={async () => { tap(true); if (await cargarAhora(r.id)) avisar(`Cargado: ${r.concepto}.`); }} hitSlop={8} style={{ alignSelf: 'flex-start', marginTop: 6, backgroundColor: c.accent + '26', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 5 }}>
+            <Text style={{ color: c.accent, fontWeight: '700', fontSize: 12 }}>＋ Cargar ahora</Text>
+          </Pressable>
+        )}
       </View>
       <Text style={{ color: r.tipo === 'Ingreso' ? c.ingreso : r.tipo === 'Ahorro' ? c.ahorro : c.gasto, fontWeight: '700' }}>{money(r.valor, r.moneda)}</Text>
     </Pressable>
@@ -35,9 +50,13 @@ const Fila = ({ r }: { r: Recurrente }) => {
 
 export default function Recurrentes() {
   const recurrentes = useFinanzas((st) => st.recurrentes);
+  const porAnio = useFinanzas((st) => st.porAnio);
+  const recargarRecurrentes = useFinanzas((st) => st.recargarRecurrentes);
   const { vista, conv } = useConversor();
+  const movsMes = useMemo(() => (porAnio[mesActual().slice(0, 4)] ?? []).filter((m) => m.fecha.startsWith(mesActual())), [porAnio]);
+  const faltan = recurrentes.filter((r) => faltaCargar(r, movsMes, hoyYmd()));
   const activos = recurrentes.filter((r) => r.activo);
-  const total = (t: Recurrente['tipo']) => activos.filter((r) => r.tipo === t).reduce((a, r) => a + Math.abs(conv(r.valor, r.moneda)), 0);
+  const total = (t: Recurrente['tipo']) => activos.filter((r) => r.tipo === t).reduce((a, r) => a + Math.abs(conv(r.valor, r.moneda)) * vecesPorMes(r), 0);
   const ingresos = total('Ingreso');
   const gastos = total('Egreso');
   const ahorro = total('Ahorro');
@@ -51,8 +70,14 @@ export default function Recurrentes() {
   return (
     <ScrollView style={{ backgroundColor: c.bg }} contentContainerStyle={{ padding: 16, paddingBottom: 40, ...centrado(MAX_FORM) }}>
       <Tip id="recurrentes" emoji="🔁">
-        Lo que se repite todos los meses (sueldo, suscripciones, alquiler) se carga solo el día que elijas. Si un mes cambia el monto, editá ese movimiento como cualquier otro.
+        Lo que se repite (sueldo, suscripciones, alquiler, o algo semanal o quincenal) se carga solo el día que toque. Si un mes cambia el monto, editá ese movimiento como cualquier otro.
       </Tip>
+
+      {faltan.length > 0 && (
+        <Pressable onPress={async () => { tap(true); const n = await recargarRecurrentes(); avisar(n ? `Listo: se cargaron ${n} recurrentes de este mes.` : 'No había nada para cargar.'); }} style={{ backgroundColor: c.accent, borderRadius: 12, padding: 14, alignItems: 'center', marginBottom: 12 }}>
+          <Text style={{ color: '#fff', fontWeight: '800' }}>↻ Cargar los {faltan.length} que faltan este mes</Text>
+        </Pressable>
+      )}
 
       {activos.length > 0 && (
         <Card>
@@ -74,7 +99,7 @@ export default function Recurrentes() {
         return (
           <Card key={t}>
             <Titulo t={titulo} />
-            {lista.map((r) => <Fila key={r.id} r={r} />)}
+            {lista.map((r) => <Fila key={r.id} r={r} movsMes={movsMes} />)}
           </Card>
         );
       })}

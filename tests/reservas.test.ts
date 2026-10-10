@@ -44,4 +44,24 @@ describe('reservas', () => {
   it('si te pasás, queda en negativo', () => {
     expect(estadosReservas([reserva({ monto: 5000 })], [gasto()], cuentas, HOY)[0].queda).toBe(-5000);
   });
+
+  describe('carpeta (reserva ligada a una cuenta de reserva, sin criterio propio)', () => {
+    const ctas = [{ id: 'mp', nombre: 'Mercado pago' }, { id: 'rg', nombre: 'MP - Reserva - Gastos' }] as Cuenta[];
+    const carpeta = reserva({ id: 'g', nombre: 'Gastos', monto: 25000, cuentaId: 'rg', categoria: '', patron: '' });
+    const retiro = mov({ tipo: 'Transferencia', valor: 13000, moneda: 'ARS', cuentaId: 'rg', cuentaDestinoId: 'mp', fecha: '2026-10-08' });
+
+    it('lo que sacás hacia otra cuenta la descuenta: 25.000 − 13.000 = 12.000', () => {
+      const [e] = estadosReservas([carpeta], [retiro], ctas, HOY);
+      expect(e.gastado).toBe(13000);
+      expect(e.queda).toBe(12000);
+    });
+    it('un gasto pagado desde esa cuenta también la descuenta', () => {
+      const [e] = estadosReservas([carpeta], [gasto({ valor: -5000, categoria: 'Servicios', cuentaId: 'rg', metodo: 'MP - Reserva - Gastos' })], ctas, HOY);
+      expect(e.queda).toBe(20000);
+    });
+    it('plata que entra a la carpeta no la descuenta', () => {
+      const deposito = mov({ tipo: 'Transferencia', valor: 21000, moneda: 'ARS', cuentaId: 'mp', cuentaDestinoId: 'rg', fecha: '2026-10-07' });
+      expect(estadosReservas([carpeta], [deposito], ctas, HOY)[0].gastado).toBe(0);
+    });
+  });
 });

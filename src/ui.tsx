@@ -1,7 +1,7 @@
 import * as Haptics from 'expo-haptics';
 import { Link, router } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { Animated, Pressable, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { Animated, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { type Nivel, useFinanzas } from './store';
 import { c, catInfo } from './theme';
 import { MONEDAS, type Moneda, type Movimiento } from './types';
@@ -45,10 +45,72 @@ export const Titulo = ({ t, sub }: { t: string; sub?: string }) => (
   </View>
 );
 
+// Encabezado de sección: título a la izquierda y, si hay, un enlace "Ver todo ›" a la derecha.
+export const Seccion = ({ t, sub, accion, ruta }: { t: string; sub?: string; accion?: string; ruta?: string }) => (
+  <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 10 }}>
+    <View style={{ flex: 1 }}>
+      <Text style={s.cardTitulo}>{t}</Text>
+      {sub && <Text style={s.sub}>{sub}</Text>}
+    </View>
+    {accion && ruta && (
+      <Link href={ruta as never} asChild>
+        <Pressable onPress={() => tap()} hitSlop={10}><Text style={{ color: c.accent, fontWeight: '600', fontSize: 13 }}>{accion} ›</Text></Pressable>
+      </Link>
+    )}
+  </View>
+);
+
+// Fila de accesos rápidos: botón redondo con ícono y nombre debajo (como la botonera de Binance).
+export const Acciones = ({ items }: { items: { emoji: string; label: string; ruta: string }[] }) => (
+  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 16, marginHorizontal: -16 }} contentContainerStyle={{ paddingHorizontal: 16, gap: 6 }}>
+    {items.map((a) => (
+      <Link key={a.ruta} href={a.ruta as never} asChild>
+        <Pressable onPress={() => tap()} style={{ width: 70, alignItems: 'center' }}>
+          <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: c.card, alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={{ fontSize: 21 }}>{a.emoji}</Text>
+          </View>
+          <Text style={{ color: c.muted, fontSize: 11, marginTop: 6, fontWeight: '500' }} numberOfLines={1}>{a.label}</Text>
+        </Pressable>
+      </Link>
+    ))}
+  </ScrollView>
+);
+
+// Variación en pastilla: verde si sube, roja si baja.
+export const Pastilla = ({ texto, positivo }: { texto: string; positivo: boolean }) => (
+  <View style={{ alignSelf: 'flex-start', backgroundColor: (positivo ? c.ingreso : c.gasto) + '22', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
+    <Text style={{ color: positivo ? c.ingreso : c.gasto, fontWeight: '600', fontSize: 12 }}>{texto}</Text>
+  </View>
+);
+
+// Lista de accesos agrupada: ícono en baldosa de color, título, una línea que explica y flecha (estilo ajustes de una billetera).
+export const MenuGrupo = ({ titulo, children }: { titulo: string; children: React.ReactNode }) => (
+  <View style={{ marginBottom: 16 }}>
+    <Text style={[s.h, { marginLeft: 4, marginBottom: 8 }]}>{titulo}</Text>
+    <View style={{ backgroundColor: c.card, borderRadius: 16, overflow: 'hidden' }}>{children}</View>
+  </View>
+);
+
+export const MenuItem = ({ emoji, color = c.accent, titulo, sub, ruta, onPress, ultimo = false }: { emoji: string; color?: string; titulo: string; sub?: string; ruta?: string; onPress?: () => void; ultimo?: boolean }) => {
+  const fila = (
+    <Pressable onPress={() => { tap(); onPress?.(); }} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 14, borderBottomWidth: ultimo ? 0 : 1, borderBottomColor: c.border }}>
+      <View style={{ width: 38, height: 38, borderRadius: 12, backgroundColor: color + '26', alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
+        <Text style={{ fontSize: 18 }}>{emoji}</Text>
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={s.titulo}>{titulo}</Text>
+        {sub && <Text style={s.sub} numberOfLines={2}>{sub}</Text>}
+      </View>
+      <Text style={{ color: c.muted, fontSize: 22, marginLeft: 8 }}>›</Text>
+    </Pressable>
+  );
+  return ruta ? <Link href={ruta as never} asChild>{fila}</Link> : fila;
+};
+
 export const Avatar = ({ categoria, size = 40 }: { categoria: string; size?: number }) => {
   const i = catInfo(categoria);
   return (
-    <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: i.color + '33', alignItems: 'center', justifyContent: 'center' }}>
+    <View style={{ width: size, height: size, borderRadius: size * 0.32, backgroundColor: i.color + '26', alignItems: 'center', justifyContent: 'center' }}>
       <Text style={{ fontSize: size * 0.48 }}>{i.emoji}</Text>
     </View>
   );
@@ -87,9 +149,9 @@ export const Chip = ({ label, on, onPress, onLongPress, color = c.accent }: { la
   <Pressable
     onPress={() => { tap(); onPress(); }}
     onLongPress={onLongPress}
-    style={{ paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, backgroundColor: on ? color : c.card, borderWidth: 1, borderColor: on ? color : c.border, marginRight: 8, marginBottom: 8 }}
+    style={{ paddingHorizontal: 14, paddingVertical: 7, borderRadius: 8, backgroundColor: on ? color : c.card2, marginRight: 8, marginBottom: 8 }}
   >
-    <Text style={{ color: on ? '#fff' : c.text, fontWeight: on ? '700' : '400' }}>{label}</Text>
+    <Text style={{ color: on ? '#fff' : c.muted, fontWeight: on ? '700' : '500', fontSize: 13 }}>{label}</Text>
   </Pressable>
 );
 
@@ -210,9 +272,9 @@ export const Fila = ({ m, conFecha = true }: { m: Movimiento; conFecha?: boolean
 
 // Selector ARS / USD / USDT tipo "segmented control"
 export const SelectorMoneda = ({ valor, onChange, chico = false }: { valor: Moneda; onChange: (m: Moneda) => void; chico?: boolean }) => (
-  <View style={{ flexDirection: 'row', backgroundColor: c.card2, borderRadius: 12, padding: 3 }}>
+  <View style={{ flexDirection: 'row', backgroundColor: c.card2, borderRadius: 8, padding: 2 }}>
     {MONEDAS.map((m) => (
-      <Pressable key={m} onPress={() => { tap(); onChange(m); }} style={{ paddingHorizontal: chico ? 10 : 16, paddingVertical: chico ? 5 : 8, borderRadius: 9, backgroundColor: valor === m ? c.accent : 'transparent' }}>
+      <Pressable key={m} onPress={() => { tap(); onChange(m); }} style={{ paddingHorizontal: chico ? 10 : 16, paddingVertical: chico ? 5 : 8, borderRadius: 6, backgroundColor: valor === m ? c.accent : 'transparent' }}>
         <Text style={{ color: valor === m ? '#fff' : c.muted, fontWeight: '700', fontSize: chico ? 12 : 14 }}>{m}</Text>
       </Pressable>
     ))}
@@ -229,18 +291,18 @@ export const Fab = () => (
 );
 
 export const s = StyleSheet.create({
-  card: { backgroundColor: c.card, borderRadius: 18, padding: 16, borderWidth: 1, borderColor: c.border, marginBottom: 12 },
-  cardTitulo: { color: c.text, fontSize: 16, fontWeight: '700' },
+  card: { backgroundColor: c.card, borderRadius: 16, padding: 16, borderWidth: 1, borderColor: c.card, marginBottom: 12 }, // el borde es del color del fondo: las alertas lo pintan con su color
+  cardTitulo: { color: c.text, fontSize: 17, fontWeight: '700', letterSpacing: -0.2 },
   fila: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 14 },
   titulo: { color: c.text, fontSize: 15, fontWeight: '600' },
   sub: { color: c.muted, fontSize: 12, marginTop: 2 },
-  fab: { position: 'absolute', right: 20, bottom: 20, width: 60, height: 60, borderRadius: 30, backgroundColor: c.accent, overflow: 'hidden', elevation: 6, shadowColor: c.accent, shadowOpacity: 0.5, shadowRadius: 10, shadowOffset: { width: 0, height: 4 } },
+  fab: { position: 'absolute', right: 20, bottom: 20, width: 56, height: 56, borderRadius: 16, backgroundColor: c.accent, overflow: 'hidden', elevation: 6, shadowColor: c.accent, shadowOpacity: 0.5, shadowRadius: 10, shadowOffset: { width: 0, height: 4 } },
   fabBtn: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: c.accent },
-  h: { color: c.muted, fontSize: 12, marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 },
-  big: { color: c.text, fontSize: 34, fontWeight: '800' },
+  h: { color: c.muted, fontSize: 12, marginBottom: 4, fontWeight: '500' },
+  big: { color: c.text, fontSize: 34, fontWeight: '700', letterSpacing: -0.5 },
   mes: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 8 },
-  mesTxt: { color: c.text, fontSize: 18, fontWeight: '700' },
-  flechaBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: c.card, alignItems: 'center', justifyContent: 'center' },
+  mesTxt: { color: c.text, fontSize: 17, fontWeight: '700' },
+  flechaBtn: { width: 36, height: 36, borderRadius: 8, backgroundColor: c.card, alignItems: 'center', justifyContent: 'center' },
   flecha: { color: c.accent, fontSize: 28, lineHeight: 30, marginTop: -3 },
-  tip: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#ff4fa31a', borderColor: '#ff4fa355', borderWidth: 1, borderRadius: 14, padding: 12, marginBottom: 12 },
+  tip: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#ff4fa31a', borderColor: '#ff4fa355', borderWidth: 1, borderRadius: 12, padding: 12, marginBottom: 12 },
 });

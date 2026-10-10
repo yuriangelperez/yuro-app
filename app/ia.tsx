@@ -1,10 +1,12 @@
 import { useMemo, useState } from 'react';
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { analizarConIA, type Hallazgo } from '../src/analisis';
 import { avisar } from '../src/alerta';
 import { clasificarConIA, loteDe, MODELO_SUGERIDO, modelosOllama, probarGemini, sinClasificar, type SugerenciaIA } from '../src/ia';
+import type { ParTransferencia } from '../src/transferencias';
 import { useCategorias, useFinanzas } from '../src/store';
 import { c, catInfo } from '../src/theme';
-import { Card, centrado, Chip, MAX_FORM, s, tap, Tip, Titulo } from '../src/ui';
+import { Card, centrado, Chip, Fila, MAX_FORM, s, tap, Tip, Titulo } from '../src/ui';
 import { fechaCorta, money, norm, ymdMenos } from '../src/util';
 
 const COLOR = { alta: c.ingreso, media: c.aviso, baja: c.muted } as const;
@@ -25,6 +27,18 @@ export default function Asistente() {
   const LOTE = loteDe(iaProveedor);
   const [progreso, setProgreso] = useState<{ hechos: number; total: number } | null>(null);
   const [estado, setEstado] = useState<{ ok: boolean; texto: string } | null>(null);
+  // Edición de lo que sugiere la IA: nombre y categoría que querés en vez de las propuestas
+  const [ediciones, setEdiciones] = useState<Record<string, { nombre?: string; categoria?: string }>>({});
+  const [abiertos, setAbiertos] = useState<Record<string, boolean>>({});
+  const editar = (id: string, cambio: { nombre?: string; categoria?: string }) => setEdiciones((e) => ({ ...e, [id]: { ...e[id], ...cambio } }));
+  // Análisis completo (duplicados, planificados cumplidos, transferencias propias)
+  const { guardar, eliminar, convertirEnTransferencia, cumplirPlanificadoCon, descartarTransferencia } = useFinanzas();
+  const planificados = useFinanzas((st) => st.planificados);
+  const descartadas = useFinanzas((st) => st.transferenciasDescartadas);
+  const [hallazgos, setHallazgos] = useState<Hallazgo[]>([]);
+  const [analizando, setAnalizando] = useState(false);
+  const [avisoAn, setAvisoAn] = useState<string | null>(null);
+  const claveH = (h: Hallazgo) => (h.tipo === 'cumple_planificado' ? `ia|plan|${h.plan.id}|${h.mov.id}` : `ia|${h.tipo}|${[h.a.id, h.b.id].sort().join('|')}`);
 
   const probarNube = async () => {
     tap();
@@ -88,22 +102,67 @@ export default function Asistente() {
     }
   };
 
+  // Lo que vas a aplicar: lo que sugiere la IA, salvo lo que hayas editado
+  const conEdicion = (sug: SugerenciaIA): SugerenciaIA => ({ ...sug, categoria: ediciones[sug.id]?.categoria ?? sug.categoria });
   const aplicar = async (sug: SugerenciaIA) => {
     tap(true);
-    if ((await aplicarSugerenciaIA(sug)) === 'sin-cuentas') avisar('No encontré las dos cuentas de esa transferencia. Revisá tus cuentas o aplicá solo la categoría.');
+    if ((await aplicarSugerenciaIA(conEdicion(sug), ediciones[sug.id]?.nombre)) === 'sin-cuentas') avisar('No encontré las dos cuentas de esa transferencia. Revisá tus cuentas o aplicá solo la categoría.');
   };
   // Aplica y deja una regla con el nombre del comercio para que la próxima vez se clasifique sola, sin IA
   const aplicarYRecordar = async (sug: SugerenciaIA) => {
     const m = movDe(sug.id);
-    if (m && sug.categoria && sug.tipo !== 'Transferencia') {
+    const categoria = conEdicion(sug).categoria;
+    if (m && categoria && sug.tipo !== 'Transferencia') {
       const palabra = norm(m.concepto).replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter((w) => w.length >= 3 && !/^\d+$/.test(w)).slice(0, 2).join(' ');
-      if (palabra) await guardarRegla(palabra, sug.categoria);
+      if (palabra) await guardarRegla(palabra, categoria);
     }
     await aplicar(sug);
   };
   const aplicarAltas = async () => {
     tap(true);
     for (const sug of sugerenciasIA.filter((x) => x.confianza === 'alta' && (x.tipo === 'Transferencia' || x.categoria))) await aplicarSugerenciaIA(sug);
+  };
+  const analizar = async () => {
+    if (analizando) return;
+    if (!esGemini && !iaModelo) return setAvisoAn('Primero conectá con Ollama y elegí un modelo (arriba).');
+    if (esGemini && !nubeUid) return setAvisoAn('Gemini necesita tu cuenta de Yuro (iniciá sesión y migrá tus datos desde Ajustes).');
+    tap(true);
+    setAnalizando(true);
+    setAvisoAn(null);
+    try {
+      const r = await analizarConIA(iaProveedor, iaUrl, iaModelo, todos, planificados, cuentas);
+      const nuevos = r.hallazgos.filter((h) => !descartadas.includes(claveH(h)));
+      setHallazgos(nuevos);
+      // Nombre propuesto: en un duplicado, el que cargaste vos; en un planificado cumplido, el del planificado
+      for (const h of nuevos) {
+        if (h.tipo === 'duplicado') editar(`h|${claveH(h)}`, { nombre: (['mercadopago', 'notificacion'].includes(h.a.origen ?? '') ? h.b : h.a).concepto });
+        if (h.tipo === 'cumple_planificado') editar(`h|${claveH(h)}`, { nombre: h.plan.concepto });
+      }
+      setAvisoAn(nuevos.length ? null : `Revisé ${r.revisados} movimientos de los últimos 45 días y no encontré nada raro.`);
+    } catch (e) {
+      setAvisoAn(e instanceof Error ? e.message : 'No se pudo analizar');
+    } finally {
+      setAnalizando(false);
+    }
+  };
+  const quitarH = (h: Hallazgo) => setHallazgos((l) => l.filter((x) => claveH(x) !== claveH(h)));
+  const descartarH = (h: Hallazgo) => { tap(); descartarTransferencia(claveH(h)); quitarH(h); };
+  const aplicarH = async (h: Hallazgo) => {
+    tap(true);
+    const nombre = (ediciones[`h|${claveH(h)}`]?.nombre ?? '').trim();
+    if (h.tipo === 'duplicado') {
+      // Se conserva el movimiento que trajo Mercado Pago (tiene su id y no se vuelve a importar); el otro aporta lo que cargaste a mano
+      const [quedar, sobra] = ['mercadopago', 'notificacion'].includes(h.a.origen ?? '') || !['mercadopago', 'notificacion'].includes(h.b.origen ?? '') ? [h.a, h.b] : [h.b, h.a];
+      await guardar({ ...quedar, concepto: nombre || quedar.concepto, categoria: quedar.categoria || sobra.categoria, categoria2: quedar.categoria2 || sobra.categoria2, cuotasCumplidas: quedar.cuotasCumplidas ?? sobra.cuotasCumplidas, cuotasTotales: quedar.cuotasTotales ?? sobra.cuotasTotales });
+      await eliminar(sobra);
+    } else if (h.tipo === 'transferencia_propia') {
+      const par: ParTransferencia = { clave: `${h.a.id}|${h.b.id}`, egreso: h.a, ingreso: h.b, segura: false, comision: Math.max(0, Math.round((Math.abs(h.a.valor) - h.b.valor) * 100) / 100) };
+      await convertirEnTransferencia(par);
+    } else {
+      if (!(await cumplirPlanificadoCon(h.plan.id, h.mov.id))) return avisar('Ese movimiento todavía no se subió a la nube: esperá unos segundos y probá de nuevo.');
+      if ((nombre && nombre !== h.mov.concepto) || (!h.mov.categoria && h.plan.categoria)) await guardar({ ...h.mov, concepto: nombre || h.mov.concepto, categoria: h.mov.categoria || h.plan.categoria, categoria2: h.mov.categoria2 || h.plan.categoria2 });
+    }
+    quitarH(h);
   };
   const altas = sugerenciasIA.filter((x) => x.confianza === 'alta').length;
 
@@ -176,6 +235,64 @@ export default function Asistente() {
             {aviso && <Text style={{ color: c.aviso, marginTop: 8 }}>{aviso}</Text>}
           </Card>
 
+          <Card>
+            <Titulo t="🔎 Análisis completo" sub="La IA mira todo junto y marca lo raro: movimientos duplicados, ingresos o gastos que cumplen algo planificado y plata que pasó entre tus cuentas. No cambia nada sola: cada hallazgo lo confirmás o lo descartás, y podés cambiarle el nombre." />
+            <Pressable onPress={analizar} disabled={analizando} style={{ backgroundColor: analizando ? c.border : c.accent, borderRadius: 12, padding: 14, alignItems: 'center', marginTop: 4 }}>
+              <Text style={{ color: '#fff', fontWeight: '800' }}>{analizando ? 'Analizando…' : '🔎 Analizar mis movimientos (últimos 45 días)'}</Text>
+            </Pressable>
+            {avisoAn && <Text style={{ color: c.aviso, marginTop: 8 }}>{avisoAn}</Text>}
+            {esGemini && <Text style={[s.sub, { marginTop: 8 }]}>Se envían a Google los movimientos recientes (concepto, importe, fecha, hora, cuenta) y tus planificados pendientes. Requiere la versión nueva de la función “ia-clasificar”.</Text>}
+          </Card>
+
+          {hallazgos.length > 0 && (
+            <Card>
+              <Titulo t={`Hallazgos (${hallazgos.length})`} />
+              {hallazgos.map((h) => {
+                const k = claveH(h);
+                const Linea = ({ m }: { m: { concepto: string; fecha: string; hora?: string | null; valor: number; moneda: 'ARS' | 'USD' | 'USDT'; cuentaId?: string | null; metodo: string; origen?: string } }) => (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', paddingTop: 6 }}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={s.titulo} numberOfLines={1}>{m.concepto}</Text>
+                      <Text style={s.sub} numberOfLines={1}>{fechaCorta(m.fecha)}{m.hora ? ` ${m.hora}` : ''} · {cuentas.find((x) => x.id === m.cuentaId)?.nombre ?? m.metodo ?? 'sin cuenta'}{m.origen && m.origen !== 'manual' ? ` · ${m.origen}` : ''}</Text>
+                    </View>
+                    <Text style={{ color: m.valor > 0 ? c.ingreso : c.gasto, fontWeight: '700' }}>{money(m.valor, m.moneda)}</Text>
+                  </View>
+                );
+                const titulo = h.tipo === 'duplicado' ? '👯 ¿Es el mismo movimiento dos veces?' : h.tipo === 'transferencia_propia' ? '↔️ ¿Plata que pasaste entre tus cuentas?' : '✅ ¿Cumple algo que habías planificado?';
+                return (
+                  <View key={k} style={{ paddingVertical: 12, borderTopWidth: 1, borderTopColor: c.border }}>
+                    <Text style={{ color: c.text, fontWeight: '700' }}>{titulo}<Text style={{ color: COLOR[h.confianza], fontSize: 12, fontWeight: '400' }}>  · confianza {h.confianza}</Text></Text>
+                    {!!h.motivo && <Text style={[s.sub, { marginTop: 2 }]}>{h.motivo}</Text>}
+                    {h.tipo === 'cumple_planificado' ? (
+                      <>
+                        <Text style={[s.sub, { marginTop: 6 }]}>Planificado: {h.plan.concepto} · {money(h.plan.valor, h.plan.moneda)} · {fechaCorta(h.plan.fecha)}</Text>
+                        <Linea m={h.mov} />
+                      </>
+                    ) : (
+                      <>
+                        <Linea m={h.a} />
+                        <Linea m={h.b} />
+                      </>
+                    )}
+                    {h.tipo !== 'transferencia_propia' && (
+                      <View style={{ marginTop: 8 }}>
+                        <Text style={s.sub}>{h.tipo === 'duplicado' ? 'Nombre con el que queda' : 'Cómo querés llamar al movimiento'}</Text>
+                        <TextInput
+                          style={{ backgroundColor: c.card2, color: c.text, borderRadius: 10, padding: 10, fontSize: 15, marginTop: 4 }}
+                          placeholder="Nombre" placeholderTextColor={c.muted} value={ediciones[`h|${k}`]?.nombre ?? ''} onChangeText={(x) => editar(`h|${k}`, { nombre: x })}
+                        />
+                      </View>
+                    )}
+                    <View style={{ flexDirection: 'row', gap: 18, marginTop: 10 }}>
+                      <Pressable onPress={() => aplicarH(h)}><Text style={{ color: c.accent, fontWeight: '700' }}>{h.tipo === 'duplicado' ? 'Unir en uno' : h.tipo === 'transferencia_propia' ? 'Unir en una transferencia' : 'Sí, lo cumplió'}</Text></Pressable>
+                      <Pressable onPress={() => descartarH(h)}><Text style={{ color: c.muted }}>{h.tipo === 'duplicado' ? 'No es duplicado' : 'No'}</Text></Pressable>
+                    </View>
+                  </View>
+                );
+              })}
+            </Card>
+          )}
+
           {sugerenciasIA.length > 0 && (
             <Card>
               <Titulo t={`Sugerencias (${sugerenciasIA.length})`} />
@@ -188,24 +305,22 @@ export default function Asistente() {
                 const m = movDe(sug.id);
                 if (!m) return null;
                 const esTransf = sug.tipo === 'Transferencia';
+                const categoria = conEdicion(sug).categoria;
                 return (
-                  <View key={sug.id} style={{ paddingVertical: 12, borderTopWidth: 1, borderTopColor: c.border }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                      <View style={{ flex: 1 }}>
-                        <Text style={s.titulo} numberOfLines={1}>{m.concepto}</Text>
-                        <Text style={s.sub}>{fechaCorta(m.fecha)}{m.metodo ? ` · ${m.metodo}` : ''}</Text>
+                  <View key={sug.id} style={{ borderTopWidth: 1, borderTopColor: c.border, paddingBottom: 8 }}>
+                    {/* El movimiento se ve como cualquier gasto: al tocarlo se abre el editor completo (nombre, importe, cuenta, categoría, fecha…) */}
+                    <Fila m={m} />
+                    <View style={{ marginHorizontal: 14, backgroundColor: c.card2, borderRadius: 10, padding: 10 }}>
+                      <Text style={{ color: c.text }}>
+                        ✨ Sugerencia: {esTransf ? `transferencia a ${sug.cuentaContraria || 'otra cuenta tuya'}` : categoria ? `${catInfo(categoria).emoji} ${categoria}` : 'sin categoría'}
+                        <Text style={{ color: COLOR[sug.confianza], fontSize: 12 }}>  · confianza {sug.confianza}</Text>
+                      </Text>
+                      {!!sug.motivo && <Text style={[s.sub, { marginTop: 2 }]}>{sug.motivo}</Text>}
+                      <View style={{ flexDirection: 'row', gap: 18, marginTop: 8, flexWrap: 'wrap' }}>
+                        {(esTransf || !!categoria) && <Pressable onPress={() => aplicar(sug)}><Text style={{ color: c.accent, fontWeight: '700' }}>Aplicar</Text></Pressable>}
+                        {!esTransf && !!categoria && <Pressable onPress={() => aplicarYRecordar(sug)}><Text style={{ color: c.accent }}>Aplicar y recordar</Text></Pressable>}
+                        <Pressable onPress={() => { tap(); descartarSugerenciaIA(sug.id); }}><Text style={{ color: c.muted }}>Descartar</Text></Pressable>
                       </View>
-                      <Text style={{ color: m.valor > 0 ? c.ingreso : c.gasto, fontWeight: '700' }}>{money(m.valor, m.moneda)}</Text>
-                    </View>
-                    <Text style={{ color: c.text, marginTop: 6 }}>
-                      {esTransf ? `↔️ Transferencia a ${sug.cuentaContraria || 'otra cuenta tuya'}` : `${catInfo(sug.categoria).emoji} ${sug.categoria || 'Sin categoría'}`}
-                      <Text style={{ color: COLOR[sug.confianza], fontSize: 12 }}>  · confianza {sug.confianza}</Text>
-                    </Text>
-                    {!!sug.motivo && <Text style={[s.sub, { marginTop: 2 }]}>{sug.motivo}</Text>}
-                    <View style={{ flexDirection: 'row', gap: 16, marginTop: 8 }}>
-                      {(esTransf || !!sug.categoria) && <Pressable onPress={() => aplicar(sug)}><Text style={{ color: c.accent, fontWeight: '700' }}>Aplicar</Text></Pressable>}
-                      {!esTransf && !!sug.categoria && <Pressable onPress={() => aplicarYRecordar(sug)}><Text style={{ color: c.accent }}>Aplicar y recordar</Text></Pressable>}
-                      <Pressable onPress={() => { tap(); descartarSugerenciaIA(sug.id); }}><Text style={{ color: c.muted }}>Descartar</Text></Pressable>
                     </View>
                   </View>
                 );
@@ -214,7 +329,7 @@ export default function Asistente() {
           )}
         </>
       )}
-      <Tip id="ia-ayuda" emoji="💡">Una vez revisado un movimiento no se vuelve a revisar, aunque descartes la sugerencia. Los modelos locales chicos se equivocan más que los grandes: por eso nada se aplica solo. Si va muy lento, usá un modelo más chico; si se equivoca mucho, uno más grande.</Tip>
+      <Tip id="ia-ayuda" emoji="💡">Tocá cualquier movimiento para editarlo por completo, como un gasto normal. Una vez revisado un movimiento no se vuelve a revisar, aunque descartes la sugerencia. Los modelos locales chicos se equivocan más que los grandes: por eso nada se aplica solo. Si va muy lento, usá un modelo más chico; si se equivoca mucho, uno más grande.</Tip>
     </ScrollView>
   );
 }

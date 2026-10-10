@@ -1,3 +1,4 @@
+import type { Frecuencia } from './recurrentes';
 import type { FuenteUsd, Presupuesto, Recurrente } from './store';
 import { supabase } from './supabase';
 import type { Deuda } from './deudas';
@@ -214,7 +215,18 @@ export const nube = {
   },
 
   async guardar(m: Movimiento) {
-    fallar((await supabase.from('movimientos').upsert(aFila(m))).error);
+    const r = await supabase.from('movimientos').upsert(aFila(m));
+    // Dos filas no pueden compartir el id de Mercado Pago/notificación. Si queda una vieja (el mismo movimiento que acabás de
+    // reemplazar con otro id, ej. al convertirlo en transferencia), se borra y se reintenta una vez.
+    if (r.error?.code === '23505' && r.error.message.includes('movimientos_externo_uq') && m.origen && m.externalId) {
+      const { data } = await supabase.from('movimientos').select('id').eq('origen', m.origen).eq('external_id', m.externalId).neq('id', m.id);
+      if (data?.length) {
+        fallar((await supabase.from('movimientos').delete().in('id', data.map((x) => x.id))).error);
+        fallar((await supabase.from('movimientos').upsert(aFila(m))).error);
+        return;
+      }
+    }
+    fallar(r.error);
   },
 
   async borrar(id: string) {
@@ -261,9 +273,13 @@ export const nube = {
 
     await reemplazar('presupuestos', uid, Object.entries(d.presupuestos).map(([categoria, p]) => ({ user_id: uid, categoria, monto: p.monto, moneda: p.moneda })), 'user_id,categoria', ['categoria']);
 
+    const usaFrecuencia = d.recurrentes.some((r) => (r.frecuencia ?? 'mensual') !== 'mensual');
     await reemplazar('recurrentes', uid, d.recurrentes.map((r) => ({
       id: r.id, user_id: uid, concepto: r.concepto, valor: r.valor, moneda: r.moneda, tipo: r.tipo, metodo: r.metodo, categoria: r.categoria,
       categoria2: r.categoria2, dia: r.dia, desde: r.desde, activo: r.activo, ultimo_ym: r.ultimoYm,
+      // columnas nuevas (migración 20261013): solo se mandan si algún recurrente las usa, así no se rompe quien todavía no la corrió.
+      // Si se mandan, van en TODAS las filas: en un upsert por lotes, la columna que falta en una fila se escribe como null.
+      ...(usaFrecuencia ? { frecuencia: r.frecuencia ?? 'mensual', dia_semana: r.diaSemana ?? null, inicio: r.inicio ?? null, ultima_fecha: r.ultimaFecha ?? null } : {}),
     })), 'id', ['id']);
 
     const cats = new Map<string, Registro>();
@@ -314,6 +330,7 @@ export const nube = {
       recurrentes: (rec.data ?? []).map((f) => ({
         id: f.id, concepto: f.concepto, valor: Number(f.valor), moneda: f.moneda, tipo: f.tipo, metodo: f.metodo, categoria: f.categoria,
         categoria2: f.categoria2, dia: f.dia, desde: f.desde, activo: f.activo, ultimoYm: f.ultimo_ym,
+        frecuencia: (f.frecuencia ?? 'mensual') as Frecuencia, diaSemana: f.dia_semana ?? null, inicio: f.inicio ?? null, ultimaFecha: f.ultima_fecha ?? null,
       })),
       saldosIniciales, ahorrosIniciales, catExtra, catOcultas,
     };
