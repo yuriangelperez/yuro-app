@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Platform, Pressable, Text, View } from 'react-native';
 import Svg, { Circle, Line, Path } from 'react-native-svg';
-import { c } from './theme';
+import { Icono } from './iconos';
+import { c, catInfo } from './theme';
 import type { Moneda } from './types';
 import { tap } from './ui';
 import { MESES, money, moneyCorto, pct } from './util';
@@ -48,7 +49,7 @@ export const Dona = ({ data, sel, onSel, moneda = 'ARS', size = 210 }: { data: P
       <Pressable onPress={() => onSel(null)} style={{ position: 'absolute', top: size * 0.25, left: size * 0.2, right: size * 0.2, bottom: size * 0.25, alignItems: 'center', justifyContent: 'center' }}>
         {elegido ? (
           <>
-            <Text style={{ fontSize: 26 }}>{elegido.emoji}</Text>
+            <Icono nombre={catInfo(elegido.label).icono ?? 'tag'} color={elegido.color} size={26} />
             <Text style={{ color: c.text, fontWeight: '800', fontSize: 16 }} numberOfLines={1}>{money(elegido.valor, moneda)}</Text>
             <Text style={{ color: elegido.color, fontWeight: '700' }}>{pct(elegido.valor, total)}%</Text>
           </>

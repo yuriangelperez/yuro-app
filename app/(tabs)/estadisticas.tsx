@@ -5,6 +5,7 @@ import { useConversor, useFinanzas } from '../../src/store';
 import { c, catInfo, metInfo } from '../../src/theme';
 import { Barra, Card, Chip, Columnas, SelectorMoneda, Tip, Titulo, centrado, s } from '../../src/ui';
 import { MESES, etiquetaMes, money, pct, yaPaso } from '../../src/util';
+import { Icono, iconoMetodo } from '../../src/iconos';
 
 const p2 = (n: number) => String(n).padStart(2, '0');
 
@@ -89,7 +90,7 @@ export default function Estadisticas() {
       </Card>
 
       <Card>
-        <Titulo t="📊 Mes a mes" sub="Verde: ingresos · Rojo: gastos. Tocá un mes para verlo." />
+        <Titulo t="Mes a mes" sub="Verde: ingresos · Rojo: gastos. Tocá un mes para verlo." />
         <BarrasMeses data={d.meses} sel={mes} onSel={setMes} moneda={vista} />
         <View style={{ backgroundColor: c.card2, borderRadius: 12, padding: 12, marginTop: 12 }}>
           <Text style={{ color: c.text, fontWeight: '700', marginBottom: 6 }}>{etiquetaMes(mes)}</Text>
@@ -102,7 +103,7 @@ export default function Estadisticas() {
         </View>
         {d.peor && d.mejor && d.conDatos.length > 1 && (
           <Text style={{ color: c.muted, marginTop: 10, lineHeight: 19 }}>
-            🏆 Tu mejor mes fue <Text style={{ color: c.text }}>{MESES[+d.mejor.ym.slice(5) - 1]}</Text>. 💸 El de más gastos fue{' '}
+            Tu mejor mes fue <Text style={{ color: c.text }}>{MESES[+d.mejor.ym.slice(5) - 1]}</Text>. El de más gastos fue{' '}
             <Text style={{ color: c.text }}>{MESES[+d.peor.ym.slice(5) - 1]}</Text> ({$(d.peor.gastos)}).
           </Text>
         )}
@@ -111,7 +112,7 @@ export default function Estadisticas() {
 
       </>} der={<>
       <Card>
-        <Titulo t="🏷️ Ranking de categorías" />
+        <Titulo t="Ranking de categorías" />
         <View style={{ flexDirection: 'row', marginBottom: 4 }}>
           <Chip label="Todo el año" on={vistaCat === 'anio'} onPress={() => setVistaCat('anio')} />
           <Chip label={MESES[+mes.slice(5) - 1]} on={vistaCat === 'mes'} onPress={() => setVistaCat('mes')} />
@@ -121,7 +122,7 @@ export default function Estadisticas() {
           <View key={cat} style={{ marginTop: 10 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
               <Text style={{ color: c.muted, width: 22 }}>{i + 1}.</Text>
-              <Text style={{ fontSize: 16, marginRight: 8 }}>{catInfo(cat).emoji}</Text>
+              <View style={{ marginRight: 8 }}><Icono nombre={catInfo(cat).icono ?? 'tag'} color={catInfo(cat).color} size={18} /></View>
               <Text style={{ color: c.text, flex: 1 }}>{cat}</Text>
               <Text style={{ color: c.muted, marginRight: 8 }}>{pct(v, totalCats)}%</Text>
               <Text style={{ color: c.text, fontWeight: '700' }}>{$(v)}</Text>
@@ -132,13 +133,13 @@ export default function Estadisticas() {
       </Card>
 
       <Card>
-        <Titulo t="💰 Ranking de ingresos" sub={vistaCat === 'anio' ? `De dónde vino tu plata en ${anio}` : `De dónde vino tu plata en ${etiquetaMes(mes)}`} />
+        <Titulo t="Ranking de ingresos" sub={vistaCat === 'anio' ? `De dónde vino tu plata en ${anio}` : `De dónde vino tu plata en ${etiquetaMes(mes)}`} />
         {catsIng.length === 0 && <Text style={{ color: c.muted }}>Sin ingresos</Text>}
         {catsIng.map(([cat, v], i) => (
           <View key={cat} style={{ marginTop: 10 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
               <Text style={{ color: c.muted, width: 22 }}>{i + 1}.</Text>
-              <Text style={{ fontSize: 16, marginRight: 8 }}>{catInfo(cat).emoji}</Text>
+              <View style={{ marginRight: 8 }}><Icono nombre={catInfo(cat).icono ?? 'tag'} color={catInfo(cat).color} size={18} /></View>
               <Text style={{ color: c.text, flex: 1 }}>{cat}</Text>
               <Text style={{ color: c.muted, marginRight: 8 }}>{pct(v, totalCatsIng)}%</Text>
               <Text style={{ color: c.ingreso, fontWeight: '700' }}>{$(v)}</Text>
@@ -149,7 +150,7 @@ export default function Estadisticas() {
       </Card>
 
       <Card>
-        <Titulo t="💳 ¿Con qué pagaste?" sub={`Gastos de ${etiquetaMes(mes)} por método`} />
+        <Titulo t="¿Con qué pagaste?" sub={`Gastos de ${etiquetaMes(mes)} por método`} />
         {metodos.length === 0 ? (
           <Text style={{ color: c.muted }}>Sin gastos este mes</Text>
         ) : (
@@ -157,7 +158,7 @@ export default function Estadisticas() {
             <Dona data={metodos} sel={selMetodo} onSel={setSelMetodo} moneda={vista} size={180} />
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 10 }}>
               {metodos.map((m) => (
-                <Chip key={m.label} label={`${m.emoji} ${m.label}`} on={selMetodo === m.label} color={m.color} onPress={() => setSelMetodo(selMetodo === m.label ? null : m.label)} />
+                <Chip key={m.label} label={m.label} icono={iconoMetodo(m.label)} on={selMetodo === m.label} color={m.color} onPress={() => setSelMetodo(selMetodo === m.label ? null : m.label)} />
               ))}
             </View>
           </>

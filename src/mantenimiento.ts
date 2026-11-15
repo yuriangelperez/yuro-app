@@ -11,6 +11,16 @@ const esReserva = (nombre: string) => /reserva/i.test(nombre);
 // Movimientos por $0 / 0 USDT: no aportan nada (suelen venir de filas vacías de la hoja)
 export const enCero = (movs: Movimiento[]) => movs.filter((m) => m.valor === 0 && m.tipo !== 'Deuda' && m.tipo !== 'Pago deuda');
 
+// Filas de "saldo" del reporte de Mercado Pago que se importaron como si fueran un ingreso (sin id de operación ni descripción:
+// el externalId queda "mp||||fecha|importe|0"). Es el saldo de la cuenta, no plata que entró: inflan el saldo y los ingresos.
+export const saldosDeMp = (movs: Movimiento[]) => movs.filter((m) => m.origen === 'mercadopago' && /^mp\|\|\|\|/.test(m.externalId ?? ''));
+
+// Movimientos de Mercado Pago que quedaron con el nombre genérico ("Mercado Pago · Pago"): sin tocar a mano (siguen siendo ingreso/egreso).
+// Se pueden borrar y volver a traer con "Sincronizar desde…" para que vengan con el nombre como en Mercado Pago. Los que ya convertiste en
+// transferencia o renombraste no entran, así no se pierde nada de lo que arreglaste.
+export const mpNombreGenerico = (movs: Movimiento[]) =>
+  movs.filter((m) => m.origen === 'mercadopago' && (m.tipo === 'Ingreso' || m.tipo === 'Egreso') && /^Mercado Pago · /.test(m.concepto) && !/^mp\|\|\|\|/.test(m.externalId ?? ''));
+
 // Sin cuenta: no suman en el saldo de ninguna cuenta (y, si son a futuro, no se sabe de cuál saldrían)
 export const sinCuenta = (movs: Movimiento[]) =>
   movs.filter((m) => !m.cuentaId && m.valor !== 0 && ['Ingreso', 'Egreso', 'Ahorro', 'Cambio'].includes(m.tipo));
@@ -175,4 +185,21 @@ export function desdeLaHoja(movs: Movimiento[], ym: string): Movimiento[] {
   return movs
     .filter((m) => m.origen === 'importacion' && m.fecha.startsWith(ym) && m.valor !== 0 && ['Ingreso', 'Egreso', 'Ahorro', 'Cambio'].includes(m.tipo))
     .sort((a, b) => Math.abs(b.valorArs ?? b.valor) - Math.abs(a.valorArs ?? a.valor));
+}
+
+// Resumen para el aviso del inicio: cuántas cosas de cada tipo hay para revisar. Son las mismas que lista "Revisar mis datos"
+// (las descartadas no cuentan), y todo se calcula en el teléfono: ningún dato sale a ningún servicio.
+export type ProblemaDatos = { id: string; nivel: 'rojo' | 'amarillo'; texto: string };
+export function problemasDeDatos(movs: Movimiento[], cuentas: Cuenta[], descartadas: string[]): ProblemaDatos[] {
+  const out: ProblemaDatos[] = [];
+  const n = (id: string, nivel: ProblemaDatos['nivel'], cant: number, uno: string, varios: string) => {
+    if (cant > 0) out.push({ id, nivel, texto: cant === 1 ? uno : varios.replace('{n}', String(cant)) });
+  };
+  n('dat-saldos', 'rojo', saldosDeMp(movs).length, 'Un saldo de Mercado Pago quedó cargado como ingreso', '{n} saldos de Mercado Pago quedaron cargados como ingreso');
+  n('dat-dup', 'amarillo', duplicadosEntreCuentas(movs).filter((x) => !descartadas.includes(`dup|${x.auto.id}`)).length, 'Un movimiento está repetido en dos cuentas', '{n} movimientos están repetidos en dos cuentas');
+  n('dat-yat', 'amarillo', yaCargadosComoTransferencia(movs).filter((x) => !descartadas.includes(`yat|${x.mov.id}`)).length, 'Una transferencia entre tus cuentas está cargada también como gasto o ingreso', '{n} transferencias entre tus cuentas están cargadas también como gasto o ingreso');
+  n('dat-pago', 'amarillo', pagosEnCuentaEquivocada(movs, cuentas).filter((x) => !descartadas.includes(`pago|${x.egreso.id}`)).length, 'Un pago salió de la cuenta equivocada', '{n} pagos salieron de la cuenta equivocada');
+  n('dat-otra', 'amarillo', pagosPorOtraCuenta(movs, cuentas).filter((x) => !descartadas.includes(`otra|${x.mov.id}`)).length, 'Un pago de Mercado Pago se hizo con plata de otra cuenta', '{n} pagos de Mercado Pago se hicieron con plata de otra cuenta');
+  n('dat-cambio', 'amarillo', cambiosMalHechos(movs, cuentas).length, 'Una transferencia en realidad es un cambio de moneda', '{n} transferencias en realidad son cambios de moneda');
+  return out;
 }

@@ -93,7 +93,7 @@ export default function Importar() {
       // ¿Alguno de lo importado parece una transferencia entre tus cuentas? Se avisa para que no infle ingresos y gastos
       const est = useFinanzas.getState();
       const posibles = detectarTransferencias(Object.values(est.porAnio).flat().filter((m) => m.fecha >= ymdMenos(180)), new Set(est.transferenciasDescartadas)).length;
-      avisar(`Se importaron ${movs.length} movimientos.${posibles ? `\n\n↔️ ${posibles} parecen transferencias entre tus cuentas: revisalas en Mis cuentas para que no cuenten como ingresos y gastos.` : ''}`);
+      avisar(`Se importaron ${movs.length} movimientos.${posibles ? `\n\n${posibles} parecen transferencias entre tus cuentas: revisalas en Mis cuentas para que no cuenten como ingresos y gastos.` : ''}`);
       router.back();
     } catch (e) {
       setError(mensajeError(e));
@@ -105,9 +105,9 @@ export default function Importar() {
   return (
     <ScrollView style={{ flex: 1, backgroundColor: c.bg }} contentContainerStyle={{ padding: 16, paddingBottom: 40, ...centrado(MAX_FORM) }} keyboardShouldPersistTaps="handled">
       <Card>
-        <Titulo t="📥 Importar extracto" sub="Subí el Excel o CSV que descargás de tu banco o billetera virtual. La app detecta las columnas, evita lo que ya cargaste y sugiere categorías según tu historial. Los PDF todavía no." />
+        <Titulo t="Importar extracto" sub="Subí el Excel o CSV que descargás de tu banco o billetera virtual. La app detecta las columnas, evita lo que ya cargaste y sugiere categorías según tu historial. Los PDF todavía no." />
         <Pressable onPress={elegir} disabled={trabajando} style={{ backgroundColor: c.accent, padding: 14, borderRadius: 14, alignItems: 'center' }}>
-          <Text style={{ color: '#fff', fontWeight: '700' }}>{lectura ? 'Elegir otro archivo' : 'Elegir archivo (.xlsx, .xls, .csv)'}</Text>
+          <Text style={{ color: c.sobre, fontWeight: '700' }}>{lectura ? 'Elegir otro archivo' : 'Elegir archivo (.xlsx, .xls, .csv)'}</Text>
         </Pressable>
         {!!error && <Text style={{ color: c.gasto, marginTop: 10, lineHeight: 19 }}>{error}</Text>}
       </Card>
@@ -160,7 +160,7 @@ export default function Importar() {
           </Card>
 
           <Pressable onPress={importar} disabled={trabajando || !marcadas} style={{ backgroundColor: c.accent, padding: 16, borderRadius: 14, alignItems: 'center', opacity: trabajando || !marcadas ? 0.5 : 1 }}>
-            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>{trabajando ? 'Importando…' : `Importar ${marcadas} movimientos`}</Text>
+            <Text style={{ color: c.sobre, fontWeight: '700', fontSize: 16 }}>{trabajando ? 'Importando…' : `Importar ${marcadas} movimientos`}</Text>
           </Pressable>
         </>
       )}

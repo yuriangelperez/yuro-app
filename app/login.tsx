@@ -6,6 +6,7 @@ import { entrarConGoogle, urlDeRegreso } from '../src/auth';
 import { useFinanzas } from '../src/store';
 import { c } from '../src/theme';
 import { centrado, tap } from '../src/ui';
+import { Icono } from '../src/iconos';
 
 // Pantalla de entrada: sin sesión no se ve nada más (ver el guard en _layout.tsx).
 export default function Login() {
@@ -29,7 +30,7 @@ export default function Login() {
   return (
     <View style={{ flex: 1, backgroundColor: c.bg, justifyContent: 'center', padding: 24 }}>
       <View style={centrado(420)}>
-        <Text style={{ fontSize: 64, textAlign: 'center' }}>💸</Text>
+        <View style={{ alignItems: 'center' }}><Icono nombre="billetera" color={c.accent} size={64} grosor={1.6} /></View>
         <Text style={{ color: c.text, fontSize: 34, fontWeight: '800', textAlign: 'center', marginTop: 8 }}>Yuro</Text>
         <Text style={{ color: c.muted, fontSize: 15, textAlign: 'center', marginTop: 8, marginBottom: 36, lineHeight: 22 }}>
           Tus gastos, ingresos y ahorros en un solo lugar. Entrá para ver tus datos en cualquier dispositivo.
@@ -40,8 +41,8 @@ export default function Login() {
           disabled={trabajando}
           style={{ backgroundColor: c.accent, padding: 16, borderRadius: 16, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', opacity: trabajando ? 0.7 : 1 }}
         >
-          {trabajando && <ActivityIndicator color="#fff" style={{ marginRight: 10 }} />}
-          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>{trabajando ? 'Abriendo Google…' : 'Continuar con Google'}</Text>
+          {trabajando && <ActivityIndicator color={c.sobre} style={{ marginRight: 10 }} />}
+          <Text style={{ color: c.sobre, fontWeight: '700', fontSize: 16 }}>{trabajando ? 'Abriendo Google…' : 'Continuar con Google'}</Text>
         </Pressable>
 
         <Pressable onPress={() => { tap(); setModoLocal(true); }} disabled={trabajando} style={{ padding: 14, borderRadius: 16, alignItems: 'center', marginTop: 10, borderWidth: 1, borderColor: c.border }}>

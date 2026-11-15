@@ -1,10 +1,10 @@
 import { Tabs } from 'expo-router';
-import { Text } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Icono, type NombreIcono } from '../../src/iconos';
 import { c } from '../../src/theme';
 import { tap, useLayout } from '../../src/ui';
 
-const icono = (emoji: string) => ({ focused }: { focused: boolean }) => <Text style={{ fontSize: focused ? 24 : 20, opacity: focused ? 1 : 0.6 }}>{emoji}</Text>;
+const icono = (nombre: NombreIcono) => ({ focused }: { focused: boolean }) => <Icono nombre={nombre} color={focused ? c.accent : c.muted} size={24} grosor={focused ? 2.4 : 2} />;
 
 export default function TabsLayout() {
   const { escritorio } = useLayout();
@@ -28,15 +28,15 @@ export default function TabsLayout() {
         tabBarActiveBackgroundColor: escritorio ? c.card : undefined,
         tabBarActiveTintColor: c.accent,
         tabBarInactiveTintColor: c.muted,
-        tabBarLabelStyle: escritorio ? { fontSize: 15, fontWeight: '600' } : { fontSize: 10, fontWeight: '600' },
+        tabBarLabelStyle: escritorio ? { fontSize: 15, fontWeight: '600' } : { fontSize: 11, fontWeight: '600' },
       }}
     >
-      <Tabs.Screen name="index" options={{ title: 'Resumen', tabBarLabel: escritorio ? 'Resumen' : 'Inicio', tabBarIcon: icono('🏠') }} />
-      <Tabs.Screen name="movimientos" options={{ title: 'Movimientos', tabBarLabel: escritorio ? 'Movimientos' : 'Lista', tabBarIcon: icono('📋') }} />
-      <Tabs.Screen name="cuotas" options={{ title: 'Cuotas', tabBarLabel: escritorio ? 'Cuotas' : 'Cuotas', tabBarIcon: icono('💳') }} />
-      <Tabs.Screen name="ahorros" options={{ title: 'Ahorros', tabBarLabel: escritorio ? 'Ahorros' : 'Ahorros', tabBarIcon: icono('🐷') }} />
-      <Tabs.Screen name="estadisticas" options={{ title: 'Estadísticas', tabBarLabel: escritorio ? 'Estadísticas' : 'Gráficos', tabBarIcon: icono('📊') }} />
-      <Tabs.Screen name="ajustes" options={{ title: 'Ajustes', tabBarLabel: escritorio ? 'Ajustes' : 'Ajustes', tabBarIcon: icono('⚙️') }} />
+      <Tabs.Screen name="index" options={{ title: 'Resumen', tabBarLabel: escritorio ? 'Resumen' : 'Inicio', tabBarIcon: icono('casa') }} />
+      <Tabs.Screen name="movimientos" options={{ title: 'Movimientos', tabBarLabel: escritorio ? 'Movimientos' : 'Lista', tabBarIcon: icono('lista') }} />
+      <Tabs.Screen name="cuotas" options={{ title: 'Cuotas', tabBarLabel: escritorio ? 'Cuotas' : 'Cuotas', tabBarIcon: icono('cuota') }} />
+      <Tabs.Screen name="ahorros" options={{ title: 'Ahorros', tabBarLabel: escritorio ? 'Ahorros' : 'Ahorros', tabBarIcon: icono('ahorro') }} />
+      <Tabs.Screen name="estadisticas" options={{ title: 'Estadísticas', tabBarLabel: escritorio ? 'Estadísticas' : 'Gráficos', tabBarIcon: icono('grafico') }} />
+      <Tabs.Screen name="ajustes" options={{ title: 'Ajustes', tabBarLabel: escritorio ? 'Ajustes' : 'Ajustes', tabBarIcon: icono('ajustes') }} />
     </Tabs>
   );
 }

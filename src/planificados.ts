@@ -8,7 +8,7 @@ export type Planificado = {
   concepto: string;
   valor: number; // con signo: ingresos +, egresos −
   moneda: Moneda;
-  tipo: 'Ingreso' | 'Egreso';
+  tipo: 'Ingreso' | 'Egreso' | 'Ahorro';
   metodo: string;
   cuentaId: string | null;
   categoria: string;

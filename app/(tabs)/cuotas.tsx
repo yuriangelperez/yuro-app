@@ -6,6 +6,7 @@ import { useConversor, useFinanzas } from '../../src/store';
 import { c, catInfo } from '../../src/theme';
 import { Avatar, Barra, Card, Columnas, MesSelector, Tip, Titulo, centrado, s, tap } from '../../src/ui';
 import { MESES, etiquetaMes, mesActual, money, moneyCorto } from '../../src/util';
+import { Icono, iconoDe } from '../../src/iconos';
 
 const nombreMes = (ym: string) => `${MESES[+ym.slice(5) - 1]}${ym.slice(0, 4) !== mesActual().slice(0, 4) ? ' ' + ym.slice(0, 4) : ''}`;
 
@@ -64,10 +65,10 @@ export default function Cuotas() {
             {[
               { e: '⏳', t: 'Te falta pagar', v: $(deuda), col: c.gasto },
               { e: '💳', t: 'Compras activas', v: String(r.activas.length + r.terminan.length), col: c.text },
-              { e: '🎉', t: 'Terminás este mes', v: String(r.terminan.length), col: c.ingreso },
+              { e: 'check', t: 'Terminás este mes', v: String(r.terminan.length), col: c.ingreso },
             ].map((x) => (
               <View key={x.t} style={{ flex: 1, backgroundColor: c.card2, borderRadius: 14, padding: 10 }}>
-                <Text style={{ fontSize: 16 }}>{x.e}</Text>
+                <Icono nombre={iconoDe(x.e)} color={x.col === c.text ? c.muted : x.col} size={18} />
                 <Text style={{ color: c.muted, fontSize: 11, marginTop: 4 }}>{x.t}</Text>
                 <Text style={{ color: x.col, fontWeight: '800', fontSize: 14 }} numberOfLines={1} adjustsFontSizeToFit>{x.v}</Text>
               </View>
@@ -81,7 +82,7 @@ export default function Cuotas() {
         {pendientes.length > 0 && (
           <Card style={{ borderColor: c.aviso }}>
             <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
-              <View style={{ flex: 1 }}><Titulo t="📌 Te faltan cargar" sub={`Cuotas que corresponden a ${nombreMes(mes)} y todavía no están en la hoja`} /></View>
+              <View style={{ flex: 1 }}><Titulo t="Te faltan cargar" sub={`Cuotas que corresponden a ${nombreMes(mes)} y todavía no están en la hoja`} /></View>
               {pendientes.length > 1 && (
                 <Pressable onPress={() => cargar(pendientes)} hitSlop={8}><Text style={{ color: c.accent, fontWeight: '700' }}>Cargar todas</Text></Pressable>
               )}
@@ -93,7 +94,7 @@ export default function Cuotas() {
                 detalle={`Cuota ${p.porCargar} de ${p.totales}`}
                 accion={
                   <Pressable onPress={() => cargar([p])} style={{ backgroundColor: c.accent, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, marginLeft: 10 }}>
-                    <Text style={{ color: '#fff', fontWeight: '700' }}>Cargar</Text>
+                    <Text style={{ color: c.sobre, fontWeight: '700' }}>Cargar</Text>
                   </Pressable>
                 }
               />
@@ -102,17 +103,17 @@ export default function Cuotas() {
         )}
 
         <Card>
-          <Titulo t={`✅ Pagadas en ${nombreMes(mes)}`} sub={r.delMes.length ? `${r.delMes.length} cuota(s) cargada(s)` : undefined} />
+          <Titulo t={`Pagadas en ${nombreMes(mes)}`} sub={r.delMes.length ? `${r.delMes.length} cuota(s) cargada(s)` : undefined} />
           {r.delMes.length === 0 && <Text style={{ color: c.muted }}>No hay cuotas cargadas este mes.</Text>}
           {r.delMes.map((p) => (
-            <FilaPlan key={p.clave} p={p} detalle={p.restantes === 0 ? '🎉 ¡Última cuota! Terminaste de pagarla' : `Cuota ${p.pagadas} de ${p.totales} · faltan ${p.restantes} (${money(p.deuda, p.moneda)})`} />
+            <FilaPlan key={p.clave} p={p} detalle={p.restantes === 0 ? '¡Última cuota! Terminaste de pagarla' : `Cuota ${p.pagadas} de ${p.totales} · faltan ${p.restantes} (${money(p.deuda, p.moneda)})`} />
           ))}
         </Card>
 
         </>} der={<>
         <Card>
-          <Titulo t="⏳ Lo que te falta pagar" sub={r.activas.length ? `Total ${$(deuda)}` : undefined} />
-          {r.activas.length === 0 && <Text style={{ color: c.muted }}>¡No te quedan cuotas por pagar! 🎉</Text>}
+          <Titulo t="Lo que te falta pagar" sub={r.activas.length ? `Total ${$(deuda)}` : undefined} />
+          {r.activas.length === 0 && <Text style={{ color: c.muted }}>¡No te quedan cuotas por pagar!</Text>}
           {r.activas.map((p) => (
             <FilaPlan key={p.clave} p={p} detalle={`Faltan ${p.restantes} cuota(s) · ${money(p.deuda, p.moneda)} · terminás en ${nombreMes(p.finYm)}`} />
           ))}
@@ -120,7 +121,7 @@ export default function Cuotas() {
 
         {r.activas.length > 0 && (
           <Card>
-            <Titulo t="📅 Próximos meses" sub="Cuánto vas a pagar de cuotas ya comprometidas" />
+            <Titulo t="Próximos meses" sub="Cuánto vas a pagar de cuotas ya comprometidas" />
             {proximos.map((x) => (
               <View key={x.ym} style={{ marginTop: 10 }}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
@@ -130,7 +131,7 @@ export default function Cuotas() {
                 <Barra valor={(x.total / max) * 100} color={c.accent} alto={6} />
                 {x.terminan.length > 0 && (
                   <Text style={[s.sub, { color: c.ingreso }]}>
-                    🎉 Terminás {x.terminan.map((p) => p.ultima.concepto).join(', ')}: después se liberan {$(suma(x.terminan, (p) => p.cuota))} por mes
+                    Terminás {x.terminan.map((p) => p.ultima.concepto).join(', ')}: después se liberan {$(suma(x.terminan, (p) => p.cuota))} por mes
                   </Text>
                 )}
               </View>

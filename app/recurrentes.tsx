@@ -7,20 +7,21 @@ import { c } from '../src/theme';
 import { descripcion, faltaCargar, proxima, tieneMovimiento, vecesPorMes } from '../src/recurrentes';
 import { Avatar, Card, centrado, MAX_FORM, s, tap, Tip, Titulo } from '../src/ui';
 import { diasDelMes, fechaCorta, hoyYmd, mesActual, money } from '../src/util';
+import { Icono } from '../src/iconos';
 
 // Estado de este mes: ya cargado, o en qué día se carga
 const estado = (r: Recurrente, movsMes: { tipo: string; concepto: string }[]) => {
-  if (!r.activo) return { t: '⏸ Pausado', col: c.muted };
+  if (!r.activo) return { t: 'Pausado', col: c.muted };
   if ((r.frecuencia ?? 'mensual') !== 'mensual') {
     const prox = proxima(r, hoyYmd(), r.ultimaFecha);
-    return { t: prox ? `⏳ Próxima: ${fechaCorta(prox)}` : '✅ Al día', col: c.aviso };
+    return { t: prox ? `Próxima: ${fechaCorta(prox)}` : 'Al día', col: c.aviso };
   }
   const ym = mesActual();
-  if (tieneMovimiento(r, movsMes)) return { t: '✅ Cargado este mes', col: c.ingreso };
+  if (tieneMovimiento(r, movsMes)) return { t: 'Cargado este mes', col: c.ingreso };
   const dia = Math.min(r.dia, diasDelMes(ym));
-  if (faltaCargar(r, movsMes, hoyYmd())) return { t: '⚠️ Falta cargar este mes', col: c.gasto };
+  if (faltaCargar(r, movsMes, hoyYmd())) return { t: 'Falta cargar este mes', col: c.gasto };
   const faltan = dia - +hoyYmd().slice(8);
-  return { t: faltan <= 0 ? '⏳ Se carga al abrir la app' : faltan === 1 ? '⏳ Se carga mañana' : `⏳ Se carga el día ${dia} (en ${faltan} días)`, col: c.aviso };
+  return { t: faltan <= 0 ? 'Se carga al abrir la app' : faltan === 1 ? 'Se carga mañana' : `Se carga el día ${dia} (en ${faltan} días)`, col: c.aviso };
 };
 
 const Fila = ({ r, movsMes }: { r: Recurrente; movsMes: { tipo: string; concepto: string }[] }) => {
@@ -61,9 +62,9 @@ export default function Recurrentes() {
   const gastos = total('Egreso');
   const ahorro = total('Ahorro');
   const grupos: { t: Recurrente['tipo']; titulo: string }[] = [
-    { t: 'Ingreso', titulo: '⬆️ Ingresos fijos' },
-    { t: 'Egreso', titulo: '⬇️ Gastos fijos' },
-    { t: 'Ahorro', titulo: '🐷 Ahorro automático' },
+    { t: 'Ingreso', titulo: 'Ingresos fijos' },
+    { t: 'Egreso', titulo: 'Gastos fijos' },
+    { t: 'Ahorro', titulo: 'Ahorro automático' },
   ];
   const ordenar = (a: Recurrente, b: Recurrente) => a.dia - b.dia;
 
@@ -75,7 +76,7 @@ export default function Recurrentes() {
 
       {faltan.length > 0 && (
         <Pressable onPress={async () => { tap(true); const n = await recargarRecurrentes(); avisar(n ? `Listo: se cargaron ${n} recurrentes de este mes.` : 'No había nada para cargar.'); }} style={{ backgroundColor: c.accent, borderRadius: 12, padding: 14, alignItems: 'center', marginBottom: 12 }}>
-          <Text style={{ color: '#fff', fontWeight: '800' }}>↻ Cargar los {faltan.length} que faltan este mes</Text>
+          <Text style={{ color: c.sobre, fontWeight: '800' }}>↻ Cargar los {faltan.length} que faltan este mes</Text>
         </Pressable>
       )}
 
@@ -106,14 +107,14 @@ export default function Recurrentes() {
 
       {recurrentes.length === 0 && (
         <View style={{ alignItems: 'center', marginVertical: 30 }}>
-          <Text style={{ fontSize: 44 }}>🔁</Text>
+          <Icono nombre="repetir" color={c.muted} size={44} />
           <Text style={{ color: c.text, fontWeight: '700', marginTop: 8 }}>Todavía no tenés recurrentes</Text>
           <Text style={{ color: c.muted, textAlign: 'center', marginTop: 4 }}>Creá uno acá o, al cargar un movimiento, activá “Repetir todos los meses”.</Text>
         </View>
       )}
 
       <Pressable onPress={() => { tap(); router.push('/recurrente'); }} style={{ backgroundColor: c.accent, padding: 16, borderRadius: 14, alignItems: 'center' }}>
-        <Text style={{ color: '#fff', fontWeight: '800' }}>+ Nuevo recurrente</Text>
+        <Text style={{ color: c.sobre, fontWeight: '800' }}>+ Nuevo recurrente</Text>
       </Pressable>
       <Text style={[s.sub, { textAlign: 'center', marginTop: 10 }]}>Se guardan en este teléfono.</Text>
     </ScrollView>

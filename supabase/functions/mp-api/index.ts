@@ -78,7 +78,7 @@ const TRADUCCION: Record<string, string> = {
 const humanizar = (d: string) => (d ? d.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase()) : 'Movimiento');
 
 // El reporte solo dice "payment" + un número. Para saber qué fue (comercio, persona) se consulta cada pago, con un tope por sincronización.
-type Detalle = { titulo?: string; contraparte?: string };
+type Detalle = { titulo?: string; contraparte?: string; qr?: boolean; transferencia?: boolean };
 async function detalles(ids: string[], token: string, miId: number): Promise<Map<string, Detalle>> {
   const out = new Map<string, Detalle>();
   const usuarios = new Map<string, string | undefined>();
@@ -104,11 +104,31 @@ async function detalles(ids: string[], token: string, miId: number): Promise<Map
         const otro = yoPago
           ? await nombreDe(p.collector_id ?? p.collector?.id)
           : [p.payer?.first_name, p.payer?.last_name].filter(Boolean).join(' ') || p.payer?.email?.split('@')[0] || (await nombreDe(p.payer?.id));
-        out.set(id, { titulo: titulo?.trim(), contraparte: otro || undefined });
+        const qr = /qr/i.test(String(p.point_of_interaction?.type ?? ''));
+        const transferencia = p.operation_type === 'money_transfer' || p.payment_type_id === 'bank_transfer' || p.payment_method_id === 'account_money' && !titulo && !qr;
+        out.set(id, { titulo: titulo?.trim(), contraparte: otro || undefined, qr, transferencia });
       } catch { /* sin detalle: queda el nombre genérico */ }
     }));
   }
   return out;
+}
+
+// Mismo texto que el resumen de cuenta de Mercado Pago ("Transferencia recibida Juan Perez", "Pago con QR Kiosco"…),
+// para que la IA y el usuario vean lo mismo que en la app de Mercado Pago. El detalle que escribió quien pagó va al final.
+function conceptoMp(desc: string, valor: number, d: Detalle | undefined, generico: string): string {
+  const con = (base: string, nombre?: string) => [base, nombre].filter(Boolean).join(' ');
+  let base: string;
+  if (desc === 'refund') base = con('Devolución de pago', d?.contraparte ?? d?.titulo);
+  else if (desc === 'chargeback') base = con('Contracargo', d?.contraparte ?? d?.titulo);
+  else if (desc === 'payment' && d) {
+    if (valor > 0) base = d.contraparte ? con('Transferencia recibida', d.contraparte) : con('Cobro', d.titulo);
+    else if (d.qr) base = con('Pago con QR', d.titulo ?? d.contraparte);
+    else if (d.transferencia && d.contraparte) base = con('Transferencia enviada', d.contraparte);
+    else base = con('Pago', d.contraparte ?? d.titulo);
+    if (d.titulo && !base.includes(d.titulo)) base += ` · ${d.titulo}`;
+    return base;
+  } else return `Mercado Pago · ${generico}`;
+  return base;
 }
 
 async function importarCsv(uid: string, texto: string, token: string, miId: number): Promise<number> {
@@ -126,8 +146,10 @@ async function importarCsv(uid: string, texto: string, token: string, miId: numb
     const clave = bruta.slice(0, 10); // la clave anti-duplicados sigue usando el texto del reporte
     if (!/^\d{4}-\d{2}-\d{2}$/.test(clave)) continue;
     const tipoReg = (iTipo >= 0 ? f[iTipo] : '').toLowerCase();
-    if (tipoReg.includes('balance') || tipoReg.includes('total')) continue; // saldos y totales no son movimientos
-    const desc = iDesc >= 0 ? f[iDesc].trim() : '';
+    const desc = iDesc >= 0 ? (f[iDesc] ?? '').trim() : '';
+    const sinId = !(iId >= 0 && (f[iId] ?? '').trim());
+    // saldos y totales no son movimientos (el reporte los trae como filas de "saldo": con o sin etiqueta, pero nunca con id de operación ni descripción)
+    if (/balance|total/.test(tipoReg) || /balance|total/i.test(desc) || (sinId && !desc)) continue;
     if (desc.toLowerCase().startsWith('reserve_for')) continue; // reservas internas: entran y salen, no son plata tuya
     const valor = Math.round(((parseFloat(f[iCred]) || 0) - (parseFloat(f[iDeb]) || 0)) * 100) / 100;
     if (!valor) continue;
@@ -144,13 +166,24 @@ async function importarCsv(uid: string, texto: string, token: string, miId: numb
     veces.set(base, k + 1);
     const d = info.get(c.id);
     const generico = TRADUCCION[c.desc.toLowerCase()] ?? humanizar(c.desc);
-    const concepto = d?.titulo
-      ? d.contraparte ? `${d.titulo} (${d.contraparte})` : d.titulo
-      : d?.contraparte ? `${c.valor < 0 ? 'Pago a' : 'Cobro de'} ${d.contraparte}` : `Mercado Pago · ${generico}`;
+    const concepto = conceptoMp(c.desc.toLowerCase(), c.valor, d, generico);
     nuevas.push({
       user_id: uid, fecha: c.fecha, hora: c.hora, concepto, valor: c.valor, moneda: 'ARS', valor_ars: c.valor,
       tipo: c.valor > 0 ? 'Ingreso' : 'Egreso', metodo: 'Mercado pago', categoria: '', categoria2: '', origen: 'mercadopago', external_id: `${base}|${k}`,
     });
+  }
+  if (!nuevas.length) return 0;
+
+  // El id de operación manda: si esa operación ya se importó (aunque en otro reporte, con otra fecha/hora por zona horaria, o ya la hayas
+  // renombrado o convertido en transferencia) no se vuelve a crear. Se compara id + tipo + importe, sin mirar fecha ni nombre.
+  const claveOp = (ext: string) => { const p = ext.split('|'); return p[1] && /^\d+$/.test(p[1]) ? `${p[1]}|${p[3]}|${p[5]}` : null; };
+  const { data: yaImportados } = await admin.from('movimientos').select('external_id').eq('user_id', uid).eq('origen', 'mercadopago').not('external_id', 'is', null).limit(50000);
+  const existentes = new Map<string, number>();
+  for (const x of yaImportados ?? []) { const k = claveOp(String(x.external_id)); if (k) existentes.set(k, (existentes.get(k) ?? 0) + 1); }
+  const restan = new Map(existentes);
+  for (let i = nuevas.length - 1; i >= 0; i--) {
+    const k = claveOp(String(nuevas[i].external_id));
+    if (k && (restan.get(k) ?? 0) > 0) { restan.set(k, restan.get(k)! - 1); nuevas.splice(i, 1); }
   }
   if (!nuevas.length) return 0;
 

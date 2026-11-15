@@ -6,6 +6,7 @@ import { useCategorias, useFinanzas } from '../src/store';
 import { c, catInfo } from '../src/theme';
 import { Card, centrado, Chip, MAX_FORM, s, tap, Tip, Titulo } from '../src/ui';
 import { hoyYmd, ymdMenos } from '../src/util';
+import { Icono } from '../src/iconos';
 
 const input = { backgroundColor: c.card2, color: c.text, borderRadius: 10, padding: 10, fontSize: 16, marginBottom: 8 } as const;
 
@@ -38,10 +39,10 @@ export default function Reglas() {
         <Titulo t="Nueva regla" />
         <TextInput style={input} placeholder='Palabra en el concepto (ej. "sube")' placeholderTextColor={c.muted} autoCapitalize="none" value={patron} onChangeText={setPatron} />
         <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-          {categorias.map((x) => <Chip key={x} label={`${catInfo(x).emoji} ${x}`} on={categoria === x} onPress={() => setCategoria(categoria === x ? '' : x)} />)}
+          {categorias.map((x) => <Chip key={x} label={x} icono={catInfo(x).icono} on={categoria === x} onPress={() => setCategoria(categoria === x ? '' : x)} />)}
         </View>
         <Pressable onPress={agregar} style={{ backgroundColor: c.accent, borderRadius: 12, padding: 14, alignItems: 'center', marginTop: 4 }}>
-          <Text style={{ color: '#fff', fontWeight: '800' }}>Guardar regla</Text>
+          <Text style={{ color: c.sobre, fontWeight: '800' }}>Guardar regla</Text>
         </Pressable>
       </Card>
 
@@ -54,7 +55,7 @@ export default function Reglas() {
           }}
           style={[s.tip, { borderColor: c.accent }]}
         >
-          <Text style={{ color: c.text, flex: 1 }}>✨ {pendientes} movimiento(s) sin categoría de los últimos 90 días coinciden con tus reglas. <Text style={{ color: c.accent, fontWeight: '700' }}>Aplicar ahora</Text></Text>
+          <Text style={{ color: c.text, flex: 1 }}>{pendientes} movimiento(s) sin categoría de los últimos 90 días coinciden con tus reglas. <Text style={{ color: c.accent, fontWeight: '700' }}>Aplicar ahora</Text></Text>
         </Pressable>
       )}
       {aviso && <Text style={{ color: c.ingreso, marginBottom: 10 }}>{aviso}</Text>}
@@ -66,10 +67,10 @@ export default function Reglas() {
           <View key={r.id} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderTopWidth: 1, borderTopColor: c.border }}>
             <View style={{ flex: 1 }}>
               <Text style={s.titulo}>"{r.patron}"</Text>
-              <Text style={s.sub}>→ {catInfo(r.categoria).emoji} {r.categoria}</Text>
+              <Text style={s.sub}>→ {r.categoria}</Text>
             </View>
             <Pressable onPress={async () => { if (await confirmar('¿Borrar la regla?', `"${r.patron}" deja de clasificar solo. Los movimientos ya clasificados no cambian.`, 'Borrar')) borrarRegla(r.id); }}>
-              <Text style={{ color: c.gasto }}>🗑</Text>
+              <View style={{ minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' }}><Icono nombre="basura" color={c.gasto} size={18} /></View>
             </Pressable>
           </View>
         ))}

@@ -74,7 +74,7 @@ export default function Calculadora() {
                 onLongPress={k === '⌫' ? () => { tap(true); setCuenta(''); } : undefined}
                 style={({ pressed }) => ({ flex: 1, height: 60, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: igual ? c.accent : pressed ? c.border : op ? c.accent + '26' : '()%C⌫'.includes(k) ? c.card2 : c.card })}
               >
-                <Text style={{ color: igual ? '#fff' : op ? c.accent : c.text, fontSize: 24, fontWeight: op || igual ? '700' : '500' }}>{k}</Text>
+                <Text style={{ color: igual ? c.sobre : op ? c.accent : c.text, fontSize: 24, fontWeight: op || igual ? '700' : '500' }}>{k}</Text>
               </Pressable>
             );
           })}
@@ -85,10 +85,10 @@ export default function Calculadora() {
       {/* Llevar el resultado a un movimiento */}
       <View style={{ flexDirection: 'row', gap: 10, marginBottom: 16 }}>
         <Pressable onPress={() => llevar('Egreso')} disabled={!resultado || resultado <= 0} style={{ flex: 1, backgroundColor: c.gasto + '26', borderRadius: 12, padding: 13, alignItems: 'center', opacity: resultado && resultado > 0 ? 1 : 0.4 }}>
-          <Text style={{ color: c.gasto, fontWeight: '700' }}>⬇️ Cargar como gasto</Text>
+          <Text style={{ color: c.gasto, fontWeight: '700' }}>Cargar como gasto</Text>
         </Pressable>
         <Pressable onPress={() => llevar('Ingreso')} disabled={!resultado || resultado <= 0} style={{ flex: 1, backgroundColor: c.ingreso + '26', borderRadius: 12, padding: 13, alignItems: 'center', opacity: resultado && resultado > 0 ? 1 : 0.4 }}>
-          <Text style={{ color: c.ingreso, fontWeight: '700' }}>⬆️ Cargar como ingreso</Text>
+          <Text style={{ color: c.ingreso, fontWeight: '700' }}>Cargar como ingreso</Text>
         </Pressable>
       </View>
 

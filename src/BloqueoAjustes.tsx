@@ -31,7 +31,7 @@ export default function BloqueoAjustes() {
               if (pin !== primero) { setError('No coinciden, probá de nuevo'); setPaso('nuevo'); setPrimero(''); return; }
               await fijarPin(pin);
               cancelar();
-              avisar('🔒 Bloqueo activado. Se pide al abrir la app y después de 30 segundos en segundo plano.');
+              avisar('Bloqueo activado. Se pide al abrir la app y después de 30 segundos en segundo plano.');
               return;
             }
             if (await quitarPin(pin)) { cancelar(); avisar('Bloqueo desactivado.'); } else setError('PIN incorrecto');
@@ -44,14 +44,14 @@ export default function BloqueoAjustes() {
 
   return (
     <Card>
-      <Titulo t="🔒 Bloqueo de la app" sub="Pedir un PIN para abrir Yuro: tus finanzas quedan protegidas si alguien usa tu teléfono." />
+      <Titulo t="Bloqueo de la app" sub="Pedir un PIN para abrir Yuro: tus finanzas quedan protegidas si alguien usa tu teléfono." />
       {Platform.OS === 'web' && <Text style={{ color: c.aviso, fontSize: 12, marginBottom: 8 }}>En la versión web el PIN no se guarda de forma segura: usalo solo para probar. En el celular se guarda en el almacén seguro del teléfono.</Text>}
       {activo ? (
         <>
-          <Pressable onPress={() => { tap(); bloquear(); }} style={{ paddingVertical: 10 }}><Text style={{ color: c.text }}>🔒 Bloquear ahora</Text></Pressable>
+          <Pressable onPress={() => { tap(); bloquear(); }} style={{ paddingVertical: 10 }}><Text style={{ color: c.text }}>Bloquear ahora</Text></Pressable>
           {biometriaDisponible && (
             <Pressable onPress={() => { tap(); setBiometria(!biometria); }} style={{ paddingVertical: 10, flexDirection: 'row', alignItems: 'center' }}>
-              <Text style={{ color: c.text, flex: 1 }}>🫆 Desbloquear también con huella o rostro</Text>
+              <Text style={{ color: c.text, flex: 1 }}>Desbloquear también con huella o rostro</Text>
               <View style={{ width: 44, height: 26, borderRadius: 13, backgroundColor: biometria ? c.accent : c.border, justifyContent: 'center', paddingHorizontal: 3 }}>
                 <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: '#fff', alignSelf: biometria ? 'flex-end' : 'flex-start' }} />
               </View>
@@ -61,7 +61,7 @@ export default function BloqueoAjustes() {
         </>
       ) : (
         <Pressable onPress={() => { tap(); setPaso('nuevo'); }} style={{ backgroundColor: c.accent, borderRadius: 12, padding: 14, alignItems: 'center' }}>
-          <Text style={{ color: '#fff', fontWeight: '800' }}>Activar PIN</Text>
+          <Text style={{ color: c.sobre, fontWeight: '800' }}>Activar PIN</Text>
         </Pressable>
       )}
     </Card>

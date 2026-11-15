@@ -8,6 +8,7 @@ import { c } from '../src/theme';
 import type { Moneda } from '../src/types';
 import { Card, centrado, Chip, MAX_FORM, s, SelectorMoneda, tap, Tip, Titulo } from '../src/ui';
 import { fechaCorta, money, parseMonto } from '../src/util';
+import { Icono, iconoCuenta } from '../src/iconos';
 
 const input = { backgroundColor: c.card2, color: c.text, borderRadius: 10, padding: 10, fontSize: 16, marginBottom: 8 } as const;
 
@@ -57,7 +58,7 @@ const Formulario = ({ previa, saldoActual, onListo }: { previa?: Cuenta; saldoAc
     <Card>
       <Titulo t={previa ? 'Editar cuenta' : 'Nueva cuenta'} />
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 4 }}>
-        {PROVEEDORES.map((p) => <Chip key={p.id} label={`${p.emoji} ${p.nombre}`} on={proveedorId === p.id} onPress={() => elegirProveedor(p.id)} />)}
+        {PROVEEDORES.map((p) => <Chip key={p.id} label={p.nombre} icono={iconoCuenta(p)} on={proveedorId === p.id} onPress={() => elegirProveedor(p.id)} />)}
       </View>
       <TextInput
         style={input}
@@ -86,7 +87,7 @@ const Formulario = ({ previa, saldoActual, onListo }: { previa?: Cuenta; saldoAc
       )}
       <TextInput style={input} placeholder={`Saldo inicial en ${moneda} (opcional)`} placeholderTextColor={c.muted} keyboardType="decimal-pad" value={saldo} onChangeText={setSaldo} />
       <Pressable onPress={guardar} disabled={!nombre.trim()} style={{ backgroundColor: nombre.trim() ? c.accent : c.border, borderRadius: 12, padding: 14, alignItems: 'center' }}>
-        <Text style={{ color: '#fff', fontWeight: '800' }}>{previa ? 'Guardar cambios' : 'Crear cuenta'}</Text>
+        <Text style={{ color: nombre.trim() ? c.sobre : c.muted, fontWeight: '800' }}>{previa ? 'Guardar cambios' : 'Crear cuenta'}</Text>
       </Pressable>
       <Pressable onPress={onListo} style={{ padding: 12, alignItems: 'center' }}>
         <Text style={{ color: c.muted }}>Cancelar</Text>
@@ -123,7 +124,7 @@ export default function Cuentas() {
     return (
       <Pressable onPress={() => { tap(); setEditando(cuenta); }} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 14, borderBottomWidth: 1, borderBottomColor: c.border, opacity: cuenta.activa ? 1 : 0.55 }}>
         <View style={{ width: 42, height: 42, borderRadius: 13, backgroundColor: c.card2, alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
-          <Text style={{ fontSize: 22 }}>{emojiCuenta(cuenta)}</Text>
+          <Icono nombre={iconoCuenta(cuenta)} color={c.text} size={22} />
         </View>
         <View style={{ flex: 1 }}>
           <Text style={s.titulo}>{cuenta.nombre}</Text>
@@ -147,7 +148,7 @@ export default function Cuentas() {
           onPress={async () => { tap(true); await guardarCuenta({ ...editando, activa: !editando.activa }); setEditando(null); }}
           style={{ padding: 14, alignItems: 'center' }}
         >
-          <Text style={{ color: editando.activa ? c.gasto : c.ingreso }}>{editando.activa ? '📦 Archivar cuenta' : '♻️ Reactivar cuenta'}</Text>
+          <Text style={{ color: editando.activa ? c.gasto : c.ingreso }}>{editando.activa ? 'Archivar cuenta' : 'Reactivar cuenta'}</Text>
         </Pressable>
       )}
     </ScrollView>
@@ -161,7 +162,7 @@ export default function Cuentas() {
 
       {sugeridas.length > 0 && (
         <Card>
-          <Titulo t="↔️ ¿Son transferencias entre tus cuentas?" sub="Figuran como un gasto en una cuenta y un ingreso en otra, así que inflan tus ingresos y gastos. Si las unís, dejan de contarse." />
+          <Titulo t="¿Son transferencias entre tus cuentas?" sub="Figuran como un gasto en una cuenta y un ingreso en otra, así que inflan tus ingresos y gastos. Si las unís, dejan de contarse." />
           {sugeridas.slice(0, 8).map((p) => (
             <View key={p.clave} style={{ paddingVertical: 10, borderTopWidth: 1, borderTopColor: c.border }}>
               <Text style={s.titulo}>{nombre(p.egreso.cuentaId)} → {nombre(p.ingreso.cuentaId)}</Text>
@@ -178,7 +179,7 @@ export default function Cuentas() {
 
       {depositos.length > 0 && (
         <Card>
-          <Titulo t="🗂️ ¿Es plata que pasaste a una reserva?" sub="Figuran como un gasto de categoría “Reserva”, pero la plata no salió de tu bolsillo: pasó de una cuenta tuya a otra. Si las convertís en transferencia, dejan de contarse como gasto." />
+          <Titulo t="¿Es plata que pasaste a una reserva?" sub="Figuran como un gasto de categoría “Reserva”, pero la plata no salió de tu bolsillo: pasó de una cuenta tuya a otra. Si las convertís en transferencia, dejan de contarse como gasto." />
           {depositos.slice(0, 10).map((d) => (
             <View key={d.clave} style={{ paddingVertical: 10, borderTopWidth: 1, borderTopColor: c.border }}>
               <Text style={s.titulo}>{money(-d.mov.valor, d.mov.moneda)} · {fechaCorta(d.mov.fecha)}</Text>
@@ -203,11 +204,11 @@ export default function Cuentas() {
       </View>
       <View style={{ flexDirection: 'row', gap: 10, marginBottom: 16 }}>
         <Pressable onPress={() => { tap(); setEditando('nueva'); }} style={{ flex: 1, backgroundColor: c.accent, borderRadius: 12, padding: 13, alignItems: 'center' }}>
-          <Text style={{ color: '#fff', fontWeight: '700' }}>＋ Agregar cuenta</Text>
+          <Text style={{ color: c.sobre, fontWeight: '700' }}>＋ Agregar cuenta</Text>
         </Pressable>
         {activas.length >= 2 && (
           <Pressable onPress={() => { tap(); router.push('/nuevo'); }} style={{ flex: 1, backgroundColor: c.card, borderRadius: 12, padding: 13, alignItems: 'center' }}>
-            <Text style={{ color: '#5dade2', fontWeight: '700' }}>↔️ Transferir{hayTransf ? '' : ' entre cuentas'}</Text>
+            <Text style={{ color: c.transferencia, fontWeight: '700' }}>Transferir{hayTransf ? '' : ' entre cuentas'}</Text>
           </Pressable>
         )}
       </View>

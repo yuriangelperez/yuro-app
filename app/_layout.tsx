@@ -6,6 +6,7 @@ import { useSesion } from '../src/auth';
 import { useBloqueo } from '../src/bloqueo';
 import PantallaBloqueo from '../src/PantallaBloqueo';
 import { nube } from '../src/nube';
+import { sincronizarMpAuto } from '../src/mp';
 import { supabase } from '../src/supabase';
 import { procesarNotificaciones } from '../src/notificaciones';
 import { useFinanzas } from '../src/store';
@@ -59,11 +60,14 @@ export default function Root() {
   // Al abrir (y al volver a la app): primero se esperan los datos guardados en el teléfono, después se baja
   // la hoja y recién ahí se cargan los recurrentes vencidos (así no se duplica lo que ya está en la hoja).
   useEffect(() => {
+    let primera = true; // al abrir o recargar la página se pide Mercado Pago siempre; después, cada 15 min
     const correr = async () => {
       // En modo nube sin sesión (pantalla de login) no hay nada que sincronizar
       if (useFinanzas.getState().nubeUid && !(await supabase.auth.getSession()).data.session) return;
       const { sincronizar, generarRecurrentes } = useFinanzas.getState();
       await sincronizar();
+      if (useFinanzas.getState().nubeUid && (await sincronizarMpAuto(primera ? 0 : 15))) await sincronizar();
+      primera = false; // Mercado Pago: trae lo nuevo solo
       await generarRecurrentes();
       if (!useFinanzas.getState().nubeUid) await useFinanzas.getState().completarCuentas();
       await procesarNotificaciones().catch(() => {}); // en Android: notificaciones de bancos → movimientos
@@ -73,7 +77,8 @@ export default function Root() {
     const sub = AppState.addEventListener('change', (e) => { if (e === 'active') correr(); });
     if (useFinanzas.persist.hasHydrated()) correr();
     const fin = useFinanzas.persist.onFinishHydration(() => correr());
-    return () => { sub.remove(); fin(); };
+    const cada = setInterval(() => { if (AppState.currentState === 'active') correr(); }, 10 * 60_000); // y cada 10 min mientras la app está abierta
+    return () => { sub.remove(); fin(); clearInterval(cada); };
   }, []);
   if (sesion === undefined || !hidratado || !bloqueo.cargado) return <View style={{ flex: 1, backgroundColor: c.bg }} />; // leyendo la sesión guardada
   if (bloqueo.bloqueado) return <PantallaBloqueo />; // los datos no se muestran hasta ingresar el PIN
@@ -92,6 +97,7 @@ export default function Root() {
           <Stack.Screen name="importar" options={{ title: 'Importar extracto' }} />
           <Stack.Screen name="planificados" options={{ title: 'Planificados' }} />
           <Stack.Screen name="reglas" options={{ title: 'Reglas automáticas' }} />
+          <Stack.Screen name="categorias" options={{ title: 'Categorías' }} />
           <Stack.Screen name="reservas" options={{ title: 'Reservas' }} />
           <Stack.Screen name="ia" options={{ title: 'Asistente de IA' }} />
           <Stack.Screen name="patrimonio" options={{ title: 'Patrimonio' }} />

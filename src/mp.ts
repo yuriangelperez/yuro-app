@@ -42,3 +42,21 @@ export async function conectarMp(): Promise<'ok' | 'cancelado' | 'redirigido'> {
 // desde (YYYY-MM-DD): pide el reporte desde ese día en vez de solo los últimos 2 días
 export const sincronizarMp = (desde?: string) => llamar<{ nuevos: number; estado: 'ok' | 'generando'; pidioNuevo: boolean }>('sincronizar', desde ? { desde } : {});
 export const desconectarMp = () => llamar<{ ok: boolean }>('desconectar');
+
+// Sincronización automática: si Mercado Pago está conectado y pasaron más de `cadaMin` minutos desde la última, trae lo nuevo.
+// Un solo pedido (sin esperar el reporte): si MP todavía lo está preparando, lo levanta la próxima vez.
+let corriendoAuto = false;
+export async function sincronizarMpAuto(cadaMin = 15): Promise<number> {
+  if (corriendoAuto) return 0;
+  corriendoAuto = true;
+  try {
+    const e = await estadoMp();
+    if (!e) return 0;
+    if (e.ultima_sync && Date.now() - new Date(e.ultima_sync).getTime() < cadaMin * 60_000) return 0;
+    return (await sincronizarMp()).nuevos;
+  } catch {
+    return 0;
+  } finally {
+    corriendoAuto = false;
+  }
+}

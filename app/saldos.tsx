@@ -6,7 +6,7 @@ import { MONEDAS, type Moneda } from '../src/types';
 import { centrado, MAX_FORM, s, tap, Tip } from '../src/ui';
 import { mesActual, money, parseMonto } from '../src/util';
 
-const NOMBRE: Record<Moneda, string> = { ARS: '🇦🇷 Pesos', USD: '💵 Dólares', USDT: '🪙 USDT' };
+const NOMBRE: Record<Moneda, string> = { ARS: 'Pesos', USD: 'Dólares', USDT: 'USDT' };
 const input = { flex: 1, backgroundColor: c.card2, color: c.text, borderRadius: 10, padding: 10, fontSize: 16 } as const;
 
 // Campo + botón Guardar (también guarda con "listo" en el teclado) y un aviso de confirmación.
@@ -15,7 +15,7 @@ const Ajuste = ({ titulo, placeholder, onGuardar }: { titulo: string; placeholde
   const [aviso, setAviso] = useState<string | null>(null);
   const guardar = () => {
     const n = parseMonto(texto);
-    if (n === null) return setAviso('✗ Escribí un número, ej. 1.057.000');
+    if (n === null) return setAviso('Escribí un número, ej. 1.057.000');
     tap(true);
     setAviso(onGuardar(n));
     setTexto('');
@@ -35,7 +35,7 @@ const Ajuste = ({ titulo, placeholder, onGuardar }: { titulo: string; placeholde
           onSubmitEditing={guardar}
         />
         <Pressable onPress={guardar} disabled={!texto} style={{ backgroundColor: texto ? c.accent : c.border, borderRadius: 10, paddingHorizontal: 16, justifyContent: 'center' }}>
-          <Text style={{ color: '#fff', fontWeight: '700' }}>Guardar</Text>
+          <Text style={{ color: texto ? c.sobre : c.muted, fontWeight: '700' }}>Guardar</Text>
         </Pressable>
       </View>
       {aviso && <Text style={{ color: aviso.startsWith('✓') ? c.ingreso : c.gasto, marginTop: 6 }}>{aviso}</Text>}
@@ -61,7 +61,7 @@ const Fila = ({ anio, base }: { anio: string; base: Saldo }) => {
         <Text style={{ color: c.text, fontWeight: '800', fontSize: 18 }}>{$(total)}</Text>
       </View>
       <Text style={[s.sub, { marginTop: 4 }]}>
-        Disponible {$(total - ahorrado)} · 🐷 Ahorrado {$(ahorrado)}
+        Disponible {$(total - ahorrado)} · Ahorrado {$(ahorrado)}
       </Text>
 
       <Ajuste

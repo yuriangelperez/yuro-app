@@ -8,11 +8,12 @@ import type { Moneda } from '../src/types';
 import { DIAS_SEMANA, descripcion, FRECUENCIAS, type Frecuencia, vecesPorMes } from '../src/recurrentes';
 import { centrado, Chip, MAX_FORM, NuevaCategoria, SelectorMoneda, tap } from '../src/ui';
 import { hoyYmd, mesActual, money, norm, parseMonto } from '../src/util';
+import { iconoMetodo } from '../src/iconos';
 
 const TIPOS: { t: Recurrente['tipo']; label: string; color: string }[] = [
-  { t: 'Egreso', label: '⬇️ Gasto', color: c.gasto },
-  { t: 'Ingreso', label: '⬆️ Ingreso', color: c.ingreso },
-  { t: 'Ahorro', label: '🐷 Ahorro', color: c.ahorro },
+  { t: 'Egreso', label: 'Gasto', color: c.gasto },
+  { t: 'Ingreso', label: 'Ingreso', color: c.ingreso },
+  { t: 'Ahorro', label: 'Ahorro', color: c.ahorro },
 ];
 const Etiqueta = ({ t }: { t: string }) => <Text style={{ color: c.muted, fontSize: 12, marginBottom: 8, marginTop: 10, textTransform: 'uppercase', letterSpacing: 0.5 }}>{t}</Text>;
 const unir = (base: string[], usados: string[]) => [...new Set([...base, ...usados.filter(Boolean)])];
@@ -84,7 +85,7 @@ export default function EditarRecurrente() {
       <View style={{ flexDirection: 'row', backgroundColor: c.card, borderRadius: 14, padding: 4, marginBottom: 12 }}>
         {TIPOS.map((x) => (
           <Pressable key={x.t} onPress={() => { tap(); setTipo(x.t); }} style={{ flex: 1, paddingVertical: 10, borderRadius: 10, alignItems: 'center', backgroundColor: tipo === x.t ? x.color : 'transparent' }}>
-            <Text style={{ color: tipo === x.t ? '#fff' : c.muted, fontWeight: '700', fontSize: 13 }}>{x.label}</Text>
+            <Text style={{ color: tipo === x.t ? c.sobre : c.muted, fontWeight: '700', fontSize: 13 }}>{x.label}</Text>
           </Pressable>
         ))}
       </View>
@@ -130,12 +131,12 @@ export default function EditarRecurrente() {
 
       <Etiqueta t="Categoría" />
       <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-        {categorias.map((x) => <Chip key={x} label={`${catInfo(x).emoji} ${x}`} on={categoria === x} color={catInfo(x).color} onPress={() => setCategoria(categoria === x ? '' : x)} />)}
+        {categorias.map((x) => <Chip key={x} label={x} icono={catInfo(x).icono} on={categoria === x} color={catInfo(x).color} onPress={() => setCategoria(categoria === x ? '' : x)} />)}
         <NuevaCategoria nivel="cat" onCreada={setCategoria} />
       </View>
       <Etiqueta t="Método" />
       <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-        {metodos.map((x) => <Chip key={x} label={`${metInfo(x).emoji} ${x}`} on={metodo === x} onPress={() => setMetodo(x)} />)}
+        {metodos.map((x) => <Chip key={x} label={x} icono={iconoMetodo(x)} on={metodo === x} onPress={() => setMetodo(x)} />)}
       </View>
       <Etiqueta t="Categoría 2" />
       <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
@@ -148,17 +149,17 @@ export default function EditarRecurrente() {
           <Etiqueta t="Estado" />
           <View style={{ flexDirection: 'row' }}>
             <Chip label="▶️ Activo" on={activo} color={c.ingreso} onPress={() => setActivo(true)} />
-            <Chip label="⏸ Pausado" on={!activo} color={c.muted} onPress={() => setActivo(false)} />
+            <Chip label="Pausado" on={!activo} color={c.muted} onPress={() => setActivo(false)} />
           </View>
         </>
       )}
 
       <Pressable onPress={onGuardar} style={{ backgroundColor: color, padding: 16, borderRadius: 14, alignItems: 'center', marginTop: 16 }}>
-        <Text style={{ color: '#fff', fontWeight: '800', fontSize: 16 }}>{previo ? 'Guardar cambios' : '🔁 Crear recurrente'}</Text>
+        <Text style={{ color: c.sobre, fontWeight: '800', fontSize: 16 }}>{previo ? 'Guardar cambios' : 'Crear recurrente'}</Text>
       </Pressable>
       {previo && (
         <Pressable onPress={onBorrar} style={{ padding: 16, alignItems: 'center' }}>
-          <Text style={{ color: c.gasto }}>🗑 Borrar recurrente</Text>
+          <Text style={{ color: c.gasto }}>Borrar recurrente</Text>
         </Pressable>
       )}
     </ScrollView>

@@ -8,13 +8,13 @@ import { type ProveedorIA, type SugerenciaIA, URL_OLLAMA } from './ia';
 import { emparejar, type Planificado } from './planificados';
 import { aplicables, buscarRegla, type Regla } from './reglas';
 import { type EstadoReserva, estadosReservas, type Reserva } from './reservas';
-import { ajustesParaConservarSaldos, fueraDelMes } from './mantenimiento';
+import { ajustesParaConservarSaldos, fueraDelMes, problemasDeDatos } from './mantenimiento';
 import { calcularAgenda, type ItemAgenda } from './agenda';
 import { type Frecuencia, faltaCargar, fechasDelMes } from './recurrentes';
 import { type DepositoReserva, detectarDepositosReserva, detectarTransferencias, type ParTransferencia } from './transferencias';
 import { type Cuenta, proveedorDe, tipoSugerido } from './proveedores';
 import { sheets } from './sheets';
-import { CATEGORIAS, CATEGORIAS2 } from './theme';
+import { CATEGORIAS, CATEGORIAS2, claveCategoria, type EstiloCategoria, setEstilosCategoria } from './theme';
 import { MONEDAS, type Moneda, type Movimiento } from './types';
 import { norm, diasDelMes, horaAhora, hoyYmd, mesActual, sumaMes, ymdMenos } from './util';
 
@@ -65,6 +65,8 @@ interface State {
   tipsOcultos: string[];
   catExtra: PorNivel; // categorías que agregaste a mano
   catOcultas: PorNivel; // categorías borradas (no se ofrecen más; los movimientos viejos las conservan)
+  catEstilos: Record<string, EstiloCategoria>; // ícono y color elegidos por categoría (se guardan en este dispositivo)
+  setEstiloCategoria: (nombre: string, estilo: EstiloCategoria) => void;
   agregarCategoria: (nivel: Nivel, nombre: string) => void;
   borrarCategoria: (nivel: Nivel, nombre: string) => void;
   recurrentes: Recurrente[];
@@ -408,6 +410,8 @@ export const useFinanzas = create<State>()(
       tipsOcultos: [],
       catExtra: { cat: [], cat2: [] },
       catOcultas: { cat: [], cat2: ['YUSARI'] },
+      catEstilos: {},
+      setEstiloCategoria: (nombre, estilo) => set((s) => ({ catEstilos: { ...s.catEstilos, [claveCategoria(nombre)]: { ...s.catEstilos[claveCategoria(nombre)], ...estilo } } })),
       agregarCategoria: (nivel, nombre) =>
         set((s) => {
           const n = nombre.trim();
@@ -843,11 +847,15 @@ export const useFinanzas = create<State>()(
       },
       partialize: (s) => ({
         nubeUid: s.nubeUid, modoLocal: s.modoLocal, url: s.url, token: s.token, porAnio: s.porAnio, pendientes: s.pendientes, ultimaSync: s.ultimaSync, versionScript: s.versionScript,
-        presupuestos: s.presupuestos, recurrentes: s.recurrentes, recienGenerados: s.recienGenerados, saldosIniciales: s.saldosIniciales, ahorrosIniciales: s.ahorrosIniciales, cuentas: s.cuentas, planificados: s.planificados, deudas: s.deudas, reservas: s.reservas, reglas: s.reglas, iaActiva: s.iaActiva, iaProveedor: s.iaProveedor, iaUrl: s.iaUrl, iaModelo: s.iaModelo, sugerenciasIA: s.sugerenciasIA, iaVistos: s.iaVistos, transferenciasDescartadas: s.transferenciasDescartadas, metaAhorro: s.metaAhorro, tipsOcultos: s.tipsOcultos, catExtra: s.catExtra, catOcultas: s.catOcultas, monedaVista: s.monedaVista, fuenteUsd: s.fuenteUsd, cotizaciones: s.cotizaciones, cotizHist: s.cotizHist,
+        catEstilos: s.catEstilos, presupuestos: s.presupuestos, recurrentes: s.recurrentes, recienGenerados: s.recienGenerados, saldosIniciales: s.saldosIniciales, ahorrosIniciales: s.ahorrosIniciales, cuentas: s.cuentas, planificados: s.planificados, deudas: s.deudas, reservas: s.reservas, reglas: s.reglas, iaActiva: s.iaActiva, iaProveedor: s.iaProveedor, iaUrl: s.iaUrl, iaModelo: s.iaModelo, sugerenciasIA: s.sugerenciasIA, iaVistos: s.iaVistos, transferenciasDescartadas: s.transferenciasDescartadas, metaAhorro: s.metaAhorro, tipsOcultos: s.tipsOcultos, catExtra: s.catExtra, catOcultas: s.catOcultas, monedaVista: s.monedaVista, fuenteUsd: s.fuenteUsd, cotizaciones: s.cotizaciones, cotizHist: s.cotizHist,
       }),
     },
   ),
 );
+
+// catInfo (theme.ts) lee el ícono y color elegidos de un mapa propio: se mantiene al día con el store.
+setEstilosCategoria(useFinanzas.getState().catEstilos ?? {});
+useFinanzas.subscribe((s, previo) => { if (s.catEstilos !== previo.catEstilos) setEstilosCategoria(s.catEstilos ?? {}); });
 
 // Los ajustes (presupuestos, recurrentes, saldos…) se suben solos a la nube unos segundos después de cada cambio.
 const ajustesDe = (s: State): DatosNube => ({
@@ -1066,7 +1074,7 @@ export const useReservas = (): EstadoReserva[] => {
 
 // ───────── Alertas ─────────
 // Lo que necesita atención hoy, en un solo lugar: presupuestos, reservas, deudas y planificados.
-export type Alerta = { id: string; nivel: 'rojo' | 'amarillo'; texto: string; ruta: '/presupuestos' | '/reservas' | '/deudas' | '/planificados' };
+export type Alerta = { id: string; nivel: 'rojo' | 'amarillo'; texto: string; ruta: '/presupuestos' | '/reservas' | '/deudas' | '/planificados' | '/revisar' };
 
 export const useAlertas = (): Alerta[] => {
   const presupuestos = useFinanzas((s) => s.presupuestos);
@@ -1075,9 +1083,13 @@ export const useAlertas = (): Alerta[] => {
   const cot = useFinanzas((s) => s.cotizaciones);
   const reservas = useReservas();
   const deudas = useResumenDeudas();
+  const cuentas = useFinanzas((s) => s.cuentas);
+  const descartadas = useFinanzas((s) => s.transferenciasDescartadas);
   return useMemo(() => {
     const out: Alerta[] = [];
     const hoy = hoyYmd();
+    // Datos mal cargados (sobre todo de Mercado Pago): se detectan solos en cada actualización y llevan a "Revisar mis datos"
+    for (const p of problemasDeDatos(Object.values(porAnio).flat(), cuentas, descartadas)) out.push({ ...p, ruta: '/revisar' });
     const ym = hoy.slice(0, 7);
     // Presupuestos: lo gastado este mes (en pesos) contra el tope de cada categoría
     const gastado: Record<string, number> = {};
@@ -1106,5 +1118,5 @@ export const useAlertas = (): Alerta[] => {
       if (p.estado === 'pendiente' && p.fecha < hoy) out.push({ id: `pla-${p.id}`, nivel: 'amarillo', texto: `Todavía no llegó: ${p.concepto}`, ruta: '/planificados' });
     }
     return out.sort((a, b) => Number(b.nivel === 'rojo') - Number(a.nivel === 'rojo'));
-  }, [presupuestos, planificados, porAnio, cot, reservas, deudas]);
+  }, [presupuestos, planificados, porAnio, cot, reservas, deudas, cuentas, descartadas]);
 };

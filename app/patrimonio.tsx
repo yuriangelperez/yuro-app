@@ -81,9 +81,9 @@ export default function Patrimonio() {
 
       <Card>
         <Titulo t={`Detalle de ${etiquetaMes(punto.ym)}`} />
-        <Linea t="💰 Tu dinero" v={punto.efectivo} moneda={vista} />
-        <Linea t="📥 Te deben" v={punto.cobrar} color={c.ingreso} moneda={vista} signo />
-        <Linea t="📤 Debés" v={-punto.deber} color={punto.deber ? c.gasto : c.muted} moneda={vista} />
+        <Linea t="Tu dinero" v={punto.efectivo} moneda={vista} />
+        <Linea t="Te deben" v={punto.cobrar} color={c.ingreso} moneda={vista} signo />
+        <Linea t="Debés" v={-punto.deber} color={punto.deber ? c.gasto : c.muted} moneda={vista} />
         <View style={{ borderTopWidth: 1, borderTopColor: c.border, marginTop: 6, paddingTop: 6 }}>
           <Linea t="Patrimonio" v={punto.total} moneda={vista} />
         </View>
@@ -93,27 +93,27 @@ export default function Patrimonio() {
       </Card>
 
       <Card>
-        <Titulo t="🏦 Dónde está tu plata hoy" sub={`Por cuenta, en ${vista}`} />
+        <Titulo t="Dónde está tu plata hoy" sub={`Por cuenta, en ${vista}`} />
         {filas.length === 0 && <Text style={s.sub}>Todavía no tenés cuentas. Se crean solas con el método de cada movimiento.</Text>}
         {filas.map(({ x, v }) => (
           <View key={x.id} style={{ marginBottom: 12, opacity: x.activa ? 1 : 0.55 }}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
-              <Text style={{ color: c.text }}>{emojiCuenta(x)} {x.nombre}</Text>
+              <Text style={{ color: c.text }}>{x.nombre}</Text>
               <Text style={{ color: v < 0 ? c.gasto : c.text, fontWeight: '700' }}>{money(v, vista)}</Text>
             </View>
-            <Barra valor={(Math.abs(v) / base) * 100} color={v < 0 ? c.gasto : '#5dade2'} alto={6} />
+            <Barra valor={(Math.abs(v) / base) * 100} color={v < 0 ? c.gasto : c.transferencia} alto={6} />
           </View>
         ))}
         {Math.abs(sinCuenta) >= 1 && (
           <View style={{ marginBottom: 4 }}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
-              <Text style={{ color: c.muted }}>❔ Sin cuenta / ajustes de saldo</Text>
+              <Text style={{ color: c.muted }}>Sin cuenta / ajustes de saldo</Text>
               <Text style={{ color: c.muted, fontWeight: '700' }}>{money(sinCuenta, vista)}</Text>
             </View>
             <Barra valor={(Math.abs(sinCuenta) / base) * 100} color={c.muted} alto={6} />
           </View>
         )}
-        {ahorrado !== 0 && <Text style={[s.sub, { marginTop: 4 }]}>🐷 {money(ahorrado, vista)} de tu dinero está ahorrado (ya incluido arriba).</Text>}
+        {ahorrado !== 0 && <Text style={[s.sub, { marginTop: 4 }]}>{money(ahorrado, vista)} de tu dinero está ahorrado (ya incluido arriba).</Text>}
         <Link href="/cuentas" asChild><Pressable onPress={() => tap()}><Text style={{ color: c.accent, fontWeight: '700', marginTop: 8 }}>Administrar cuentas ›</Text></Pressable></Link>
       </Card>
     </ScrollView>

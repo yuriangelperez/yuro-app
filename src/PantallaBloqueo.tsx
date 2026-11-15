@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { useBloqueo } from './bloqueo';
 import { c } from './theme';
+import { Icono } from './iconos';
 
 const TECLAS = [['1', '2', '3'], ['4', '5', '6'], ['7', '8', '9'], ['bio', '0', '⌫']];
 export const LARGO_PIN = 4;
@@ -42,7 +43,7 @@ export const TecladoPin = ({ titulo, sub, error, onPin, biometria, onBiometria, 
                 onPress={() => pulsar(k)}
                 style={({ pressed }) => ({ width: 72, height: 72, borderRadius: 36, alignItems: 'center', justifyContent: 'center', backgroundColor: oculta ? 'transparent' : pressed ? c.border : c.card, opacity: deshabilitado ? 0.4 : 1 })}
               >
-                <Text style={{ color: c.text, fontSize: k === 'bio' ? 26 : 26, fontWeight: '600' }}>{k === 'bio' ? (oculta ? '' : '🫆') : k}</Text>
+                {k === 'bio' ? (oculta ? null : <Icono nombre="escudo" color={c.text} size={26} />) : <Text style={{ color: c.text, fontSize: 26, fontWeight: '600' }}>{k}</Text>}
               </Pressable>
             );
           })}
@@ -66,7 +67,7 @@ export default function PantallaBloqueo() {
   const espera = Math.max(0, Math.ceil((esperaHasta - ahora) / 1000));
   return (
     <View style={{ flex: 1, backgroundColor: c.bg, alignItems: 'center', justifyContent: 'center' }}>
-      <Text style={{ fontSize: 40, marginBottom: 8 }}>🔒</Text>
+      <View style={{ marginBottom: 8 }}><Icono nombre="candado" color={c.text} size={40} /></View>
       <TecladoPin
         titulo="Yuro bloqueado"
         sub={espera ? `Demasiados intentos. Esperá ${espera} s.` : 'Ingresá tu PIN'}

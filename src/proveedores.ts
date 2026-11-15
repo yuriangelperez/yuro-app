@@ -7,13 +7,13 @@ export type TipoCuenta = 'bank' | 'wallet' | 'cash' | 'payment' | 'exchange' | '
 export type Proveedor = { id: string; nombre: string; tipo: TipoCuenta; emoji: string; alias: string[] };
 
 export const TIPOS_CUENTA: { t: TipoCuenta; label: string }[] = [
-  { t: 'wallet', label: '📱 Billetera' },
-  { t: 'bank', label: '🏦 Banco' },
-  { t: 'cash', label: '💵 Efectivo' },
-  { t: 'payment', label: '🅿️ Pagos' },
-  { t: 'exchange', label: '🪙 Exchange' },
-  { t: 'savings', label: '🐷 Ahorros' },
-  { t: 'investment', label: '📈 Inversión' },
+  { t: 'wallet', label: 'Billetera' },
+  { t: 'bank', label: 'Banco' },
+  { t: 'cash', label: 'Efectivo' },
+  { t: 'payment', label: 'Pagos' },
+  { t: 'exchange', label: 'Exchange' },
+  { t: 'savings', label: 'Ahorros' },
+  { t: 'investment', label: 'Inversión' },
 ];
 
 export const PROVEEDORES: Proveedor[] = [

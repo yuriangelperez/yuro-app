@@ -7,25 +7,26 @@ import { descripcion as descripcionRec } from '../src/recurrentes';
 import { emojiCuenta } from '../src/proveedores';
 import { convertir, useCategorias, useFinanzas } from '../src/store';
 import { nuevoId } from '../src/nube';
-import { METODOS, c, catInfo, metInfo } from '../src/theme';
+import { METODOS, c, catInfo, metInfo, radio, suave, tipo as tipoTxt, TOQUE } from '../src/theme';
+import { Icono, type NombreIcono, iconoCuenta, iconoMetodo } from '../src/iconos';
 import type { Moneda, Movimiento, Tipo } from '../src/types';
-import { centrado, Chip, MAX_FORM, NuevaCategoria, SelectorMoneda, tap } from '../src/ui';
+import { BarraAccion, Boton, centrado, Chip, Interruptor, MAX_FORM, NuevaCategoria, PantallaTeclado, Segmentado, SelectorFecha, SelectorMoneda, tap } from '../src/ui';
 import { horaAhora, hoyYmd, money, ymdMenos } from '../src/util';
 
-const Etiqueta = ({ t }: { t: string }) => <Text style={{ color: c.muted, fontSize: 12, marginBottom: 8, marginTop: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>{t}</Text>;
+const Etiqueta = ({ t }: { t: string }) => <Text style={{ ...tipoTxt.etiqueta, color: c.muted, marginBottom: 8, marginTop: 12 }}>{t}</Text>;
 const Grupo = ({ children }: { children: React.ReactNode }) => <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 6 }}>{children}</View>;
 
 // Valores de la hoja + los que ya uses, sin repetir
 const unir = (base: string[], usados: string[]) => [...new Set([...base, ...usados.filter(Boolean)])];
 
-const TIPOS: { t: Tipo; label: string; color: string }[] = [
-  { t: 'Egreso', label: '⬇️ Gasto', color: c.gasto },
-  { t: 'Ingreso', label: '⬆️ Ingreso', color: c.ingreso },
-  { t: 'Ahorro', label: '🐷 Ahorro', color: c.ahorro },
-  { t: 'Cambio', label: '🔄 Cambio', color: '#5dade2' },
-  { t: 'Transferencia', label: '↔️ Transf.', color: '#5dade2' },
-  { t: 'Deuda', label: '🤝 Deuda', color: '#af7ac5' }, // solo al editar un préstamo o un pago: se crean desde Deudas
-  { t: 'Pago deuda', label: '🤝 Pago deuda', color: '#af7ac5' },
+const TIPOS: { t: Tipo; label: string; color: string; icono: NombreIcono }[] = [
+  { t: 'Egreso', label: 'Gasto', color: c.gasto, icono: 'compras' },
+  { t: 'Ingreso', label: 'Ingreso', color: c.ingreso, icono: 'sueldo' },
+  { t: 'Ahorro', label: 'Ahorro', color: c.ahorro, icono: 'ahorro' },
+  { t: 'Cambio', label: 'Cambio de moneda', color: c.transferencia, icono: 'cambio' },
+  { t: 'Transferencia', label: 'Entre mis cuentas', color: c.transferencia, icono: 'transferir' },
+  { t: 'Deuda', label: 'Deuda', color: c.deuda, icono: 'usuario' }, // solo al editar un préstamo o un pago: se crean desde Deudas
+  { t: 'Pago deuda', label: 'Pago deuda', color: c.deuda, icono: 'usuario' },
 ];
 const AYUDA: Record<Tipo, string> = {
   Egreso: 'Plata que sale: compras, cuentas, cuotas.',
@@ -106,7 +107,7 @@ export default function Nuevo() {
   const todos = useMemo(() => Object.values(porAnio).flat(), [porAnio]);
   const previo = id ? (porAnio[(fechaParam ?? '').slice(0, 4)] ?? todos).find((m) => m.id === id) : undefined;
 
-  const [tipo, setTipo] = useState<Tipo>(previo?.tipo ?? (tipoParam === 'Ingreso' ? 'Ingreso' : 'Egreso'));
+  const [tipo, setTipo] = useState<Tipo>(previo?.tipo ?? (tipoParam === 'Ingreso' ? 'Ingreso' : tipoParam === 'Ahorro' ? 'Ahorro' : 'Egreso'));
   const [expr, setExpr] = useState(previo ? aExpr(Math.abs(previo.valor)) : montoParam ?? '');
   const [moneda, setMoneda] = useState<Moneda>(previo?.moneda ?? 'ARS');
   const [expr2, setExpr2] = useState(''); // lo que recibís en un cambio
@@ -197,7 +198,7 @@ export default function Nuevo() {
   const enArs = moneda !== 'ARS' && !cambioDoble && (entradaArs ?? (tipo === 'Ahorro' && !previo));
   const convertido = enArs ? convertir(a, 'ARS', moneda, cotizaciones) : null;
   const ahorroConPesos = tipo === 'Ahorro' && moneda !== 'ARS' && !previo && desdePesos;
-  const puedePlanificar = (tipo === 'Ingreso' || tipo === 'Egreso') && !cambioDoble;
+  const puedePlanificar = (tipo === 'Ingreso' || tipo === 'Egreso' || tipo === 'Ahorro') && !cambioDoble;
   const planesPendientes = useMemo(() => planificados.filter((p) => p.estado === 'pendiente' && p.tipo === tipo), [planificados, tipo]);
   const puedeRepetir = tipo !== 'Cambio' && !esTransf && !ahorroConPesos && !(credito && totales) && !yaRecurrente;
   // Cotización implícita del cambio: cuántas unidades de la moneda "fuerte" por 1
@@ -262,7 +263,7 @@ export default function Nuevo() {
         if (!(await confirmar('¿Pasar a pendiente?', `"${previo.concepto}" deja de contar en tus saldos y estadísticas hasta que ocurra. Lo vas a ver en Planificados.`, 'Pasar a pendiente'))) return setEnviado(false);
         await eliminar(previo);
         await guardarPlanificado({
-          fecha, concepto: concepto.trim(), valor, moneda, tipo: tipo as 'Ingreso' | 'Egreso', metodo, cuentaId: previo.cuentaId ?? null, categoria, categoria2,
+          fecha, concepto: concepto.trim(), valor, moneda, tipo: tipo as 'Ingreso' | 'Egreso' | 'Ahorro', metodo, cuentaId: previo.cuentaId ?? null, categoria, categoria2,
         });
         router.back();
       })();
@@ -286,7 +287,7 @@ export default function Nuevo() {
     if (planNuevo) {
       // Todavía no ocurrió: queda como pendiente en Planificados y no toca saldos ni estadísticas
       guardarPlanificado({
-        fecha, concepto: mov.concepto, valor, moneda, tipo: tipo as 'Ingreso' | 'Egreso', metodo,
+        fecha, concepto: mov.concepto, valor, moneda, tipo: tipo as 'Ingreso' | 'Egreso' | 'Ahorro', metodo,
         cuentaId: cuentas.find((x) => x.nombre.toLowerCase() === metodo.trim().toLowerCase())?.id ?? null, categoria, categoria2,
       });
       return router.back();
@@ -304,7 +305,7 @@ export default function Nuevo() {
         const actual = { ...previo, ...mov, id: previo.id } as Movimiento;
         const par = emparejar(planificados.filter((p) => p.estado === 'pendiente'), [actual])[0];
         if (par) guardarPlanificado({ ...par.plan, estado: 'cumplido', movimientoId: previo.id });
-        else guardarPlanificado({ fecha, concepto: mov.concepto, valor, moneda, tipo: tipo as 'Ingreso' | 'Egreso', metodo, cuentaId: previo.cuentaId ?? null, categoria, categoria2, estado: 'cumplido', movimientoId: previo.id });
+        else guardarPlanificado({ fecha, concepto: mov.concepto, valor, moneda, tipo: tipo as 'Ingreso' | 'Egreso' | 'Ahorro', metodo, cuentaId: previo.cuentaId ?? null, categoria, categoria2, estado: 'cumplido', movimientoId: previo.id });
       } else if (!esPlan && planDePrevio) borrarPlanificado(planDePrevio.id);
     }
     if (repetir && puedeRepetir) {
@@ -362,26 +363,42 @@ export default function Nuevo() {
   }, [cambioDoble, auto, expr, expr2, moneda, moneda2, cotizaciones]);
   const notaAuto = 'Calculado con la cotización de hoy · tocá para poner lo que pagaste'
 
+  const tiposVisibles = TIPOS.filter((x) => (x.t !== 'Cambio' || !previo || previo.tipo === 'Cambio') && (x.t !== 'Transferencia' || !hojaConectada || previo?.tipo === 'Transferencia') && ((x.t !== 'Deuda' && x.t !== 'Pago deuda') || previo?.tipo === x.t));
+  const tiposPrincipales = tiposVisibles.filter((x) => x.t === 'Egreso' || x.t === 'Ingreso' || x.t === 'Ahorro');
+  const tiposOtros = tiposVisibles.filter((x) => !tiposPrincipales.includes(x));
+  const colorTipo = (t: Tipo) => TIPOS.find((x) => x.t === t)?.color ?? c.accent;
+  const hayOpciones = (puedeCuotas && !cambioDoble) || puedePlanificar || puedeRepetir || !!yaRecurrente;
+  const textoGuardar = previo ? (puedePlanificar && esPlan && !planDePrevio && !planYaPaso ? 'Pasar a pendiente' : 'Guardar cambios') : cambioDoble ? 'Registrar cambio' : puedePlanificar && esPlan && planSel === 'nuevo' ? 'Guardar como pendiente' : 'Guardar';
+
   return (
-    <ScrollView style={{ backgroundColor: c.bg }} contentContainerStyle={{ padding: 16, paddingBottom: 60, ...centrado(MAX_FORM) }} keyboardShouldPersistTaps="handled">
+    <PantallaTeclado>
+    <ScrollView style={{ backgroundColor: c.bg }} contentContainerStyle={{ padding: 16, paddingBottom: 32, ...centrado(MAX_FORM) }} keyboardShouldPersistTaps="handled">
       {/* Tipo */}
-      <View style={{ flexDirection: 'row', backgroundColor: c.card, borderRadius: 14, padding: 4, marginBottom: 6 }}>
-        {TIPOS.filter((x) => (x.t !== 'Cambio' || !previo || previo.tipo === 'Cambio') && (x.t !== 'Transferencia' || !hojaConectada || previo?.tipo === 'Transferencia') && ((x.t !== 'Deuda' && x.t !== 'Pago deuda') || previo?.tipo === x.t)).map((x) => (
-          <Pressable key={x.t} onPress={() => { tap(); setTipo(x.t); }} style={{ flex: 1, paddingVertical: 10, borderRadius: 10, alignItems: 'center', backgroundColor: tipo === x.t ? x.color : 'transparent' }}>
-            <Text style={{ color: tipo === x.t ? '#fff' : c.muted, fontWeight: '700', fontSize: 13 }}>{x.label}</Text>
-          </Pressable>
-        ))}
-      </View>
-      <Text style={{ color: c.muted, fontSize: 12, marginBottom: 12, marginLeft: 4 }}>{AYUDA[tipo]}</Text>
+      <Segmentado opciones={tiposPrincipales.map((x) => ({ valor: x.t, label: x.label }))} valor={tipo} onChange={setTipo} colorDe={colorTipo} />
+      {tiposOtros.length > 0 && (
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
+          {tiposOtros.map((x) => {
+            const on = tipo === x.t;
+            return (
+              <Pressable key={x.t} onPress={() => { tap(); setTipo(x.t); }} accessibilityRole="radio" accessibilityState={{ selected: on }}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 36, paddingHorizontal: 12, borderRadius: radio.total, borderWidth: 1, borderColor: on ? x.color : c.border, backgroundColor: on ? suave(x.color) : 'transparent' }}>
+                <Icono nombre={x.icono} color={on ? x.color : c.muted} size={16} />
+                <Text style={{ color: on ? c.text : c.muted, fontSize: 13, fontWeight: '600' }}>{x.label}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      )}
+      <Text style={{ ...tipoTxt.sub, color: c.muted, marginTop: 8, marginBottom: 16, marginLeft: 4 }}>{AYUDA[tipo]}</Text>
 
       {/* Monto(s) */}
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-        <Text style={{ color: c.muted, fontSize: 12, textTransform: 'uppercase' }}>{cambioDoble ? 'Entregás' : 'Moneda'}</Text>
+        <Text style={{ ...tipoTxt.etiqueta, color: c.muted }}>{cambioDoble ? 'Entregás' : 'Monto'}</Text>
         <SelectorMoneda valor={moneda} onChange={setMoneda} chico />
       </View>
       {moneda !== 'ARS' && !cambioDoble && (
         <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-          <Text style={{ color: c.muted, fontSize: 12, marginRight: 8 }}>Escribir el monto en</Text>
+          <Text style={{ color: c.muted, fontSize: 13, marginRight: 8 }}>Escribir el monto en</Text>
           <Chip label="$ Pesos" on={enArs} onPress={() => { setEntradaArs(true); setExpr(''); }} />
           <Chip label={moneda} on={!enArs} onPress={() => { setEntradaArs(false); setExpr(''); }} />
         </View>
@@ -399,13 +416,13 @@ export default function Nuevo() {
         }
       />
       {tipo === 'Ahorro' && moneda !== 'ARS' && !previo && (
-        <View style={{ backgroundColor: c.card, borderRadius: 14, padding: 12, marginBottom: 10 }}>
-          <Text style={{ color: c.muted, fontSize: 12, marginBottom: 8 }}>¿Con qué plata ahorrás?</Text>
+        <View style={{ backgroundColor: c.card, borderRadius: radio.l, padding: 12, marginBottom: 10, borderWidth: 1, borderColor: c.border }}>
+          <Text style={{ color: c.muted, fontSize: 13, marginBottom: 8 }}>¿Con qué plata ahorrás?</Text>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-            <Chip label={`💱 Con pesos`} on={desdePesos} color={c.ahorro} onPress={() => setDesdePesos(true)} />
-            <Chip label={`🪙 Con ${moneda} que ya tenía`} on={!desdePesos} color={c.ahorro} onPress={() => setDesdePesos(false)} />
+            <Chip label="Con pesos" on={desdePesos} color={c.ahorro} onPress={() => setDesdePesos(true)} />
+            <Chip label={`Con ${moneda} que ya tenía`} on={!desdePesos} color={c.ahorro} onPress={() => setDesdePesos(false)} />
           </View>
-          <Text style={{ color: c.muted, fontSize: 11 }}>
+          <Text style={{ color: c.muted, fontSize: 12 }}>
             {desdePesos
               ? `Se registra el cambio ARS → ${moneda} y el ahorro: tus pesos bajan y tu ahorro en ${moneda} sube.`
               : `Solo pasa ${moneda} de disponible a ahorrado.`}
@@ -415,15 +432,18 @@ export default function Nuevo() {
       {cambioDoble && (
         <>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-            <Text style={{ color: c.muted, fontSize: 12, textTransform: 'uppercase' }}>Recibís</Text>
+            <Text style={{ ...tipoTxt.etiqueta, color: c.muted }}>Recibís</Text>
             <SelectorMoneda valor={moneda2} onChange={setMoneda2} chico />
           </View>
           <Monto expr={expr2} moneda={moneda2} color={c.ingreso} activo={campo === 'b'} onPress={() => setCampo(campo === 'b' ? null : 'b')} nota={auto === 'b' && expr2 ? notaAuto : undefined} />
           {tasa && (
-            <Text style={{ color: c.text, marginBottom: 10, marginLeft: 4 }}>
-              💱 Te salió a {tasa}
-              {ref > 0 && <Text style={{ color: c.muted }}> (referencia hoy {money(ref)})</Text>}
-            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10, marginLeft: 4 }}>
+              <Icono nombre="cambio" color={c.transferencia} size={16} />
+              <Text style={{ color: c.text }}>
+                Te salió a {tasa}
+                {ref > 0 && <Text style={{ color: c.muted }}> (referencia hoy {money(ref)})</Text>}
+              </Text>
+            </View>
           )}
         </>
       )}
@@ -440,12 +460,15 @@ export default function Nuevo() {
       />
       {sugerencias.length > 0 && (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }} keyboardShouldPersistTaps="handled">
-          {sugerencias.map((m) => (
-            <Pressable key={m.id} onPress={() => usarSugerencia(m)} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: c.card2, borderRadius: 20, paddingHorizontal: 12, paddingVertical: 7, marginRight: 8 }}>
-              <Text style={{ marginRight: 6 }}>{catInfo(m.categoria).emoji}</Text>
-              <Text style={{ color: c.text }}>{m.concepto}</Text>
-            </Pressable>
-          ))}
+          {sugerencias.map((m) => {
+            const i = catInfo(m.categoria);
+            return (
+              <Pressable key={m.id} onPress={() => usarSugerencia(m)} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: c.card2, borderRadius: radio.total, paddingHorizontal: 12, minHeight: 36, marginRight: 8 }}>
+                <Icono nombre={i.icono ?? 'tag'} color={i.color} size={16} />
+                <Text style={{ color: c.text }}>{m.concepto}</Text>
+              </Pressable>
+            );
+          })}
         </ScrollView>
       )}
 
@@ -459,9 +482,12 @@ export default function Nuevo() {
               const on = categoria === x;
               return (
                 <View key={x} style={{ width: '25%', padding: 4 }}>
-                  <Pressable onPress={() => { tap(); setCategoria(on ? '' : x); }} onLongPress={() => onBorrarCategoria('cat', x)} style={{ alignItems: 'center', paddingVertical: 10, borderRadius: 14, backgroundColor: on ? i.color + '40' : c.card, borderWidth: 2, borderColor: on ? i.color : 'transparent' }}>
-                    <Text style={{ fontSize: 24 }}>{i.emoji}</Text>
-                    <Text style={{ color: on ? c.text : c.muted, fontSize: 11, marginTop: 4 }} numberOfLines={1}>{x}</Text>
+                  <Pressable onPress={() => { tap(); setCategoria(on ? '' : x); }} onLongPress={() => onBorrarCategoria('cat', x)} accessibilityRole="radio" accessibilityState={{ selected: on }} accessibilityLabel={x}
+                    style={{ alignItems: 'center', paddingVertical: 10, paddingHorizontal: 4, borderRadius: radio.m, backgroundColor: on ? suave(i.color) : c.card, borderWidth: 1.5, borderColor: on ? i.color : c.border }}>
+                    <View style={{ width: 40, height: 40, borderRadius: radio.m, alignItems: 'center', justifyContent: 'center', backgroundColor: suave(i.color) }}>
+                      <Icono nombre={i.icono ?? 'tag'} color={i.color} size={22} />
+                    </View>
+                    <Text style={{ color: on ? c.text : c.muted, fontSize: 12, fontWeight: on ? '600' : '400', marginTop: 6 }} numberOfLines={1}>{x}</Text>
                   </Pressable>
                 </View>
               );
@@ -470,14 +496,14 @@ export default function Nuevo() {
           <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
             <NuevaCategoria nivel="cat" onCreada={setCategoria} />
           </View>
-          <Text style={{ color: c.muted, fontSize: 11, marginBottom: 6 }}>Mantené apretada una categoría para borrarla.</Text>
+          <Text style={{ color: c.muted, fontSize: 12, marginBottom: 6 }}>Mantené apretada una categoría para borrarla.</Text>
         </>
       )}
 
       {esTransf ? (
         cuentasActivas.length < 2 ? (
           <Link href="/cuentas" asChild>
-            <Pressable style={{ backgroundColor: c.card, borderRadius: 14, padding: 12, marginTop: 6 }}>
+            <Pressable style={{ backgroundColor: c.card, borderRadius: radio.l, padding: 12, marginTop: 6, borderWidth: 1, borderColor: c.border }}>
               <Text style={{ color: c.text }}>Necesitás al menos dos cuentas para transferir. <Text style={{ color: c.accent, fontWeight: '700' }}>Crear cuentas ›</Text></Text>
             </Pressable>
           </Link>
@@ -485,11 +511,11 @@ export default function Nuevo() {
           <>
             <Etiqueta t="Desde" />
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 6 }} keyboardShouldPersistTaps="handled">
-              {cuentasActivas.map((x) => <Chip key={x.id} label={`${emojiCuenta(x)} ${x.nombre}`} on={origenId === x.id} onPress={() => setOrigenId(x.id)} color="#5dade2" />)}
+              {cuentasActivas.map((x) => <Chip key={x.id} label={x.nombre} icono={iconoCuenta(x)} on={origenId === x.id} onPress={() => setOrigenId(x.id)} color={c.transferencia} />)}
             </ScrollView>
             <Etiqueta t="Hacia" />
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 6 }} keyboardShouldPersistTaps="handled">
-              {cuentasActivas.filter((x) => x.id !== origenId).map((x) => <Chip key={x.id} label={`${emojiCuenta(x)} ${x.nombre}`} on={destinoId === x.id} onPress={() => setDestinoId(x.id)} color="#5dade2" />)}
+              {cuentasActivas.filter((x) => x.id !== origenId).map((x) => <Chip key={x.id} label={x.nombre} icono={iconoCuenta(x)} on={destinoId === x.id} onPress={() => setDestinoId(x.id)} color={c.transferencia} />)}
             </ScrollView>
           </>
         )
@@ -497,36 +523,93 @@ export default function Nuevo() {
         <>
           <Etiqueta t="Sale de (cuenta)" />
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 6 }} keyboardShouldPersistTaps="handled">
-            {cuentasActivas.map((x) => <Chip key={x.id} label={`${emojiCuenta(x)} ${x.nombre}`} on={origenId === x.id} onPress={() => setOrigenId(origenId === x.id ? null : x.id)} color="#5dade2" />)}
+            {cuentasActivas.map((x) => <Chip key={x.id} label={x.nombre} icono={iconoCuenta(x)} on={origenId === x.id} onPress={() => setOrigenId(origenId === x.id ? null : x.id)} color={c.transferencia} />)}
           </ScrollView>
           <Etiqueta t="Entra en (cuenta)" />
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 6 }} keyboardShouldPersistTaps="handled">
-            {cuentasActivas.map((x) => <Chip key={x.id} label={`${emojiCuenta(x)} ${x.nombre}`} on={destinoId === x.id} onPress={() => setDestinoId(destinoId === x.id ? null : x.id)} color="#5dade2" />)}
+            {cuentasActivas.map((x) => <Chip key={x.id} label={x.nombre} icono={iconoCuenta(x)} on={destinoId === x.id} onPress={() => setDestinoId(destinoId === x.id ? null : x.id)} color={c.transferencia} />)}
           </ScrollView>
-          <Text style={{ color: c.muted, fontSize: 11, marginBottom: 6 }}>Si cambiás dentro de la misma cuenta (ej. una billetera con pesos y dólares), elegí la misma en las dos.</Text>
+          <Text style={{ color: c.muted, fontSize: 12, marginBottom: 6 }}>Si cambiás dentro de la misma cuenta (ej. una billetera con pesos y dólares), elegí la misma en las dos.</Text>
         </>
       ) : (
         <>
           <Etiqueta t="Método" />
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 6 }}>
-            {metodos.map((x) => <Chip key={x} label={`${metInfo(x).emoji} ${x}`} on={metodo === x} onPress={() => setMetodo(x)} />)}
+            {metodos.map((x) => <Chip key={x} label={x} icono={iconoMetodo(x)} on={metodo === x} onPress={() => setMetodo(x)} />)}
           </ScrollView>
         </>
       )}
 
-      {puedeCuotas && !cambioDoble && (
-        <View style={{ flexDirection: 'row', marginTop: 4 }}>
-          <Chip label={credito ? '💳 En cuotas ✓' : '💳 ¿Es en cuotas?'} on={credito} onPress={() => setCuotasManual(!credito)} />
-        </View>
-      )}
-      {credito && !cambioDoble && (
+      {/* Fecha */}
+      <Etiqueta t="Fecha" />
+      <Grupo>
+        <Chip label="Hoy" on={fecha === hoyYmd()} onPress={() => setFecha(hoyYmd())} />
+        <Chip label="Ayer" on={fecha === ymdMenos(1)} onPress={() => setFecha(ymdMenos(1))} />
+        <Chip label="Anteayer" on={fecha === ymdMenos(2)} onPress={() => setFecha(ymdMenos(2))} />
+      </Grupo>
+      <SelectorFecha valor={fecha} onChange={setFecha} etiqueta="Otra fecha" onOpen={() => setCampo(null)} />
+
+      {/* Opciones: cuotas, planificado y repetir, siempre a la vista */}
+      {hayOpciones && (
         <>
-          <Etiqueta t="Cuotas (cumplidas / totales)" />
-          <View style={{ flexDirection: 'row', gap: 10 }}>
-            <TextInput style={{ ...input, flex: 1 }} placeholder="Cumplidas" placeholderTextColor={c.muted} keyboardType="number-pad" value={cumplidas} onChangeText={setCumplidas} onFocus={() => setCampo(null)} />
-            <TextInput style={{ ...input, flex: 1 }} placeholder="Totales" placeholderTextColor={c.muted} keyboardType="number-pad" value={totales} onChangeText={setTotales} onFocus={() => setCampo(null)} />
+          <Etiqueta t="Opciones" />
+          <View style={{ backgroundColor: c.card, borderRadius: radio.l, borderWidth: 1, borderColor: c.border, paddingHorizontal: 16, marginBottom: 6 }}>
+            {puedeCuotas && !cambioDoble && (
+              <View>
+                <Interruptor on={credito} onPress={() => setCuotasManual(!credito)} titulo="En cuotas" sub={credito ? 'Cargá cuántas pagaste y cuántas son' : 'Para compras con tarjeta en cuotas'} color={c.accent} />
+                {credito && (
+                  <View style={{ paddingBottom: 12 }}>
+                    <View style={{ flexDirection: 'row', gap: 10 }}>
+                      <TextInput style={{ ...input, flex: 1, marginBottom: 0 }} placeholder="Cumplidas" placeholderTextColor={c.muted} keyboardType="number-pad" value={cumplidas} onChangeText={setCumplidas} onFocus={() => setCampo(null)} accessibilityLabel="Cuotas cumplidas" />
+                      <TextInput style={{ ...input, flex: 1, marginBottom: 0 }} placeholder="Totales" placeholderTextColor={c.muted} keyboardType="number-pad" value={totales} onChangeText={setTotales} onFocus={() => setCampo(null)} accessibilityLabel="Cuotas totales" />
+                    </View>
+                    {!!totales && a > 0 && <Text style={{ color: c.muted, fontSize: 13, marginTop: 8 }}>Total de la compra en {totales} cuotas: {money(a * +totales, moneda)}</Text>}
+                  </View>
+                )}
+              </View>
+            )}
+            {puedePlanificar && (
+              <View style={{ borderTopWidth: puedeCuotas && !cambioDoble ? 1 : 0, borderTopColor: c.border }}>
+                <Interruptor
+                  on={esPlan}
+                  color={c.transferencia}
+                  titulo="Es un movimiento planificado"
+                  sub={previo ? (esPlan ? (planDePrevio ? 'Está vinculado a un planificado cumplido' : planYaPaso ? 'Queda como planificado ya cumplido' : 'Pasa a pendiente en Planificados') : 'Marcalo si lo habías planificado de antes') : esPlan ? 'Elegí si todavía no ocurrió o si cumple uno que ya planificaste' : 'Para algo que esperás cobrar o pagar'}
+                  onPress={() => {
+                    const on = !esPlan;
+                    setEsPlan(on);
+                    // Al crear: si es a futuro, lo normal es dejarlo pendiente; si no, cumplir el planificado pendiente que más se le parece
+                    if (on && !previo) setPlanSel(fecha > hoyYmd() || !planesPendientes.length ? 'nuevo' : planesPendientes[0].id);
+                  }}
+                />
+                {esPlan && previo && !planDePrevio && (
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', paddingBottom: 6 }}>
+                    <Chip label="Ya se cumplió" on={planYaPaso} color={c.transferencia} onPress={() => setPlanYaPaso(true)} />
+                    <Chip label="Todavía no se cumplió" on={!planYaPaso} color={c.transferencia} onPress={() => setPlanYaPaso(false)} />
+                  </View>
+                )}
+                {esPlan && !previo && (
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', paddingBottom: 6 }}>
+                    <Chip label="Todavía no ocurrió (queda pendiente)" on={planSel === 'nuevo'} color={c.transferencia} onPress={() => setPlanSel('nuevo')} />
+                    {planesPendientes.map((p) => (
+                      <Chip key={p.id} label={`Cumple: ${p.concepto} (${p.fecha.slice(8)}/${p.fecha.slice(5, 7)})`} on={planSel === p.id} color={c.transferencia} onPress={() => setPlanSel(p.id)} />
+                    ))}
+                  </View>
+                )}
+              </View>
+            )}
+            {puedeRepetir && (
+              <View style={{ borderTopWidth: (puedeCuotas && !cambioDoble) || puedePlanificar ? 1 : 0, borderTopColor: c.border }}>
+                <Interruptor on={repetir} onPress={() => setRepetir(!repetir)} titulo="Repetir todos los meses" sub={repetir ? `Se va a cargar solo el día ${+fecha.slice(8)} de cada mes` : 'Para sueldo, suscripciones, alquiler…'} color={c.accent} />
+              </View>
+            )}
+            {yaRecurrente && (
+              <Pressable onPress={() => { tap(); router.push({ pathname: '/recurrente', params: { id: yaRecurrente.id } }); }} style={{ flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 56, borderTopWidth: (puedeCuotas && !cambioDoble) || puedePlanificar || puedeRepetir ? 1 : 0, borderTopColor: c.border }}>
+                <Icono nombre="repetir" color={c.accent} size={20} />
+                <Text style={{ color: c.text, flex: 1 }}>Se repite: {descripcionRec(yaRecurrente).toLowerCase()} · <Text style={{ color: c.accent, fontWeight: '700' }}>Editar ›</Text></Text>
+              </Pressable>
+            )}
           </View>
-          {!!totales && a > 0 && <Text style={{ color: c.muted, fontSize: 12, marginBottom: 8 }}>Total de la compra en {totales} cuotas: {money(a * +totales, moneda)}</Text>}
         </>
       )}
 
@@ -538,80 +621,16 @@ export default function Nuevo() {
         <NuevaCategoria nivel="cat2" onCreada={setCategoria2} />
       </Grupo>}
 
-      {puedePlanificar && (
-        <View style={{ backgroundColor: esPlan ? '#5dade222' : c.card, borderWidth: 1, borderColor: esPlan ? '#5dade2' : c.border, borderRadius: 14, padding: 12, marginTop: 6 }}>
-          <Pressable
-            onPress={() => {
-              tap();
-              const on = !esPlan;
-              setEsPlan(on);
-              // Al crear: si es a futuro, lo normal es dejarlo pendiente; si no, cumplir el planificado pendiente que más se le parece
-              if (on && !previo) setPlanSel(fecha > hoyYmd() || !planesPendientes.length ? 'nuevo' : planesPendientes[0].id);
-            }}
-            style={{ flexDirection: 'row', alignItems: 'center' }}
-          >
-            <Text style={{ fontSize: 20, marginRight: 10 }}>🗓️</Text>
-            <View style={{ flex: 1 }}>
-              <Text style={{ color: c.text, fontWeight: '700' }}>Es un movimiento planificado</Text>
-              <Text style={{ color: c.muted, fontSize: 12 }}>
-                {previo ? (esPlan ? (planDePrevio ? 'Está vinculado a un planificado cumplido' : planYaPaso ? 'Queda como planificado ya cumplido' : 'Pasa a pendiente en Planificados') : 'Marcalo si lo habías planificado de antes') : esPlan ? 'Elegí si todavía no ocurrió o si cumple uno que ya planificaste' : 'Para algo que esperás cobrar o pagar'}
-              </Text>
-            </View>
-            <View style={{ width: 44, height: 26, borderRadius: 13, backgroundColor: esPlan ? '#5dade2' : c.border, justifyContent: 'center', paddingHorizontal: 3 }}>
-              <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: '#fff', alignSelf: esPlan ? 'flex-end' : 'flex-start' }} />
-            </View>
-          </Pressable>
-          {esPlan && previo && !planDePrevio && (
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 10 }}>
-              <Chip label="✅ Ya se cumplió" on={planYaPaso} color="#5dade2" onPress={() => setPlanYaPaso(true)} />
-              <Chip label="⏳ Todavía no se cumplió" on={!planYaPaso} color="#5dade2" onPress={() => setPlanYaPaso(false)} />
-            </View>
-          )}
-          {esPlan && !previo && (
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 10 }}>
-              <Chip label="⏳ Todavía no ocurrió (queda pendiente)" on={planSel === 'nuevo'} color="#5dade2" onPress={() => setPlanSel('nuevo')} />
-              {planesPendientes.map((p) => (
-                <Chip key={p.id} label={`✅ Cumple: ${p.concepto} (${p.fecha.slice(8)}/${p.fecha.slice(5, 7)})`} on={planSel === p.id} color="#5dade2" onPress={() => setPlanSel(p.id)} />
-              ))}
-            </View>
-          )}
-        </View>
-      )}
-
-      {puedeRepetir && (
-        <Pressable onPress={() => { tap(); setRepetir(!repetir); }} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: repetir ? c.accent + '22' : c.card, borderWidth: 1, borderColor: repetir ? c.accent : c.border, borderRadius: 14, padding: 12, marginTop: 6 }}>
-          <Text style={{ fontSize: 20, marginRight: 10 }}>🔁</Text>
-          <View style={{ flex: 1 }}>
-            <Text style={{ color: c.text, fontWeight: '700' }}>Repetir todos los meses</Text>
-            <Text style={{ color: c.muted, fontSize: 12 }}>{repetir ? `Se va a cargar solo el día ${+fecha.slice(8)} de cada mes` : 'Para sueldo, suscripciones, alquiler…'}</Text>
-          </View>
-          <View style={{ width: 44, height: 26, borderRadius: 13, backgroundColor: repetir ? c.accent : c.border, justifyContent: 'center', paddingHorizontal: 3 }}>
-            <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: '#fff', alignSelf: repetir ? 'flex-end' : 'flex-start' }} />
-          </View>
-        </Pressable>
-      )}
-      {yaRecurrente && (
-        <Pressable onPress={() => { tap(); router.push({ pathname: '/recurrente', params: { id: yaRecurrente.id } }); }} style={{ backgroundColor: c.card, borderRadius: 14, padding: 12, marginTop: 6 }}>
-          <Text style={{ color: c.text }}>🔁 Se repite: {descripcionRec(yaRecurrente).toLowerCase()} · <Text style={{ color: c.accent, fontWeight: '700' }}>Editar recurrente ›</Text></Text>
-        </Pressable>
-      )}
-
-      <Etiqueta t="Fecha" />
-      <Grupo>
-        <Chip label="Hoy" on={fecha === hoyYmd()} onPress={() => setFecha(hoyYmd())} />
-        <Chip label="Ayer" on={fecha === ymdMenos(1)} onPress={() => setFecha(ymdMenos(1))} />
-        <Chip label="Anteayer" on={fecha === ymdMenos(2)} onPress={() => setFecha(ymdMenos(2))} />
-      </Grupo>
-      <TextInput style={input} placeholder="Otra fecha AAAA-MM-DD" placeholderTextColor={c.muted} value={fecha} onChangeText={setFecha} onFocus={() => setCampo(null)} />
-
-      <Pressable onPress={onGuardar} style={({ pressed }) => ({ backgroundColor: color, padding: 16, borderRadius: 14, alignItems: 'center', marginTop: 6, transform: [{ scale: pressed ? 0.97 : 1 }] })}>
-        <Text style={{ color: '#fff', fontWeight: '800', fontSize: 16 }}>{previo ? (puedePlanificar && esPlan && !planDePrevio && !planYaPaso ? 'Pasar a pendiente' : 'Guardar cambios') : cambioDoble ? 'Registrar cambio' : puedePlanificar && esPlan && planSel === 'nuevo' ? 'Guardar como pendiente' : 'Guardar'}</Text>
-      </Pressable>
       {previo && (
-        <Pressable onPress={onEliminar} style={{ padding: 16, alignItems: 'center' }}>
-          <Text style={{ color: c.gasto }}>🗑 Eliminar</Text>
+        <Pressable onPress={onEliminar} accessibilityRole="button" style={{ flexDirection: 'row', gap: 8, minHeight: TOQUE, marginTop: 12, alignItems: 'center', justifyContent: 'center' }}>
+          <Icono nombre="basura" color={c.gasto} size={18} />
+          <Text style={{ color: c.gasto, fontWeight: '600' }}>Eliminar movimiento</Text>
         </Pressable>
       )}
     </ScrollView>
+    <BarraAccion>
+      <Boton titulo={textoGuardar} onPress={onGuardar} color={color} icono="check" />
+    </BarraAccion>
+    </PantallaTeclado>
   );
 }

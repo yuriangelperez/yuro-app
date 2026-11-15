@@ -169,7 +169,7 @@ export default function Asistente() {
   return (
     <ScrollView style={{ backgroundColor: c.bg }} contentContainerStyle={{ padding: 16, paddingBottom: 40, ...centrado(MAX_FORM) }}>
       <Card>
-        <Titulo t="✨ Asistente de IA (gratis)" sub="Sugiere categoría y tipo para los movimientos que llegaron sin clasificar. Solo sugiere: vos decidís." />
+        <Titulo t="Asistente de IA (gratis)" sub="Sugiere categoría y tipo para los movimientos que llegaron sin clasificar. Solo sugiere: vos decidís." />
         <Pressable onPress={() => { tap(); setIaActiva(!iaActiva); }} style={{ flexDirection: 'row', alignItems: 'center' }}>
           <View style={{ flex: 1 }}>
             <Text style={{ color: c.text, fontWeight: '700' }}>{iaActiva ? 'Activado' : 'Desactivado'}</Text>
@@ -186,14 +186,14 @@ export default function Asistente() {
           <Card>
             <Titulo t="¿Con qué IA?" />
             <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-              <Chip label="🖥️ Ollama (en mi compu)" on={!esGemini} onPress={() => { setIaProveedor('ollama'); setEstado(null); }} />
-              <Chip label="☁️ Gemini (Google, gratis)" on={esGemini} onPress={() => { setIaProveedor('gemini'); setEstado(null); }} />
+              <Chip label="Ollama (en mi compu)" on={!esGemini} onPress={() => { setIaProveedor('ollama'); setEstado(null); }} />
+              <Chip label="Gemini (Google, gratis)" on={esGemini} onPress={() => { setIaProveedor('gemini'); setEstado(null); }} />
             </View>
           </Card>
 
           {esGemini ? (
             <Card>
-              <Titulo t="☁️ Gemini (Google AI Studio)" />
+              <Titulo t="Gemini (Google AI Studio)" />
               <Pressable onPress={probarNube} disabled={probando || !nubeUid} style={{ backgroundColor: c.card2, borderRadius: 10, padding: 12, alignItems: 'center', opacity: nubeUid ? 1 : 0.5 }}>
                 <Text style={{ color: c.accent, fontWeight: '700' }}>{probando ? 'Probando…' : 'Probar conexión con Gemini'}</Text>
               </Pressable>
@@ -205,7 +205,7 @@ export default function Asistente() {
             </Card>
           ) : (
           <Card>
-            <Titulo t="🖥️ Conexión con Ollama" />
+            <Titulo t="Conexión con Ollama" />
             <TextInput
               style={{ backgroundColor: c.card2, color: c.text, borderRadius: 10, padding: 10, fontSize: 16, marginBottom: 8 }}
               placeholder="http://localhost:11434" placeholderTextColor={c.muted} autoCapitalize="none" autoCorrect={false} value={url} onChangeText={setUrl}
@@ -230,15 +230,15 @@ export default function Asistente() {
             <Text style={s.titulo}>{porRevisar.length ? `${porRevisar.length} movimiento(s) sin clasificar (últimos 60 días)` : 'No hay movimientos sin clasificar para revisar'}</Text>
             {porRevisar.length > LOTE && <Text style={s.sub}>Se revisan de a {LOTE}; después podés repetir.</Text>}
             <Pressable onPress={revisar} disabled={!porRevisar.length || cargando} style={{ backgroundColor: porRevisar.length && !cargando ? c.accent : c.border, borderRadius: 12, padding: 14, alignItems: 'center', marginTop: 10 }}>
-              <Text style={{ color: '#fff', fontWeight: '800' }}>{cargando ? `Revisando… ${progreso?.hechos ?? 0}/${progreso?.total ?? ''}` : `✨ Revisar ${Math.min(porRevisar.length, LOTE)}`}</Text>
+              <Text style={{ color: porRevisar.length && !cargando ? c.sobre : c.muted, fontWeight: '800' }}>{cargando ? `Revisando… ${progreso?.hechos ?? 0}/${progreso?.total ?? ''}` : `Revisar ${Math.min(porRevisar.length, LOTE)}`}</Text>
             </Pressable>
             {aviso && <Text style={{ color: c.aviso, marginTop: 8 }}>{aviso}</Text>}
           </Card>
 
           <Card>
-            <Titulo t="🔎 Análisis completo" sub="La IA mira todo junto y marca lo raro: movimientos duplicados, ingresos o gastos que cumplen algo planificado y plata que pasó entre tus cuentas. No cambia nada sola: cada hallazgo lo confirmás o lo descartás, y podés cambiarle el nombre." />
+            <Titulo t="Análisis completo" sub="La IA mira todo junto y marca lo raro: movimientos duplicados, ingresos o gastos que cumplen algo planificado y plata que pasó entre tus cuentas. No cambia nada sola: cada hallazgo lo confirmás o lo descartás, y podés cambiarle el nombre." />
             <Pressable onPress={analizar} disabled={analizando} style={{ backgroundColor: analizando ? c.border : c.accent, borderRadius: 12, padding: 14, alignItems: 'center', marginTop: 4 }}>
-              <Text style={{ color: '#fff', fontWeight: '800' }}>{analizando ? 'Analizando…' : '🔎 Analizar mis movimientos (últimos 45 días)'}</Text>
+              <Text style={{ color: analizando ? c.muted : c.sobre, fontWeight: '800' }}>{analizando ? 'Analizando…' : 'Analizar mis movimientos (últimos 45 días)'}</Text>
             </Pressable>
             {avisoAn && <Text style={{ color: c.aviso, marginTop: 8 }}>{avisoAn}</Text>}
             {esGemini && <Text style={[s.sub, { marginTop: 8 }]}>Se envían a Google los movimientos recientes (concepto, importe, fecha, hora, cuenta) y tus planificados pendientes. Requiere la versión nueva de la función “ia-clasificar”.</Text>}
@@ -258,7 +258,7 @@ export default function Asistente() {
                     <Text style={{ color: m.valor > 0 ? c.ingreso : c.gasto, fontWeight: '700' }}>{money(m.valor, m.moneda)}</Text>
                   </View>
                 );
-                const titulo = h.tipo === 'duplicado' ? '👯 ¿Es el mismo movimiento dos veces?' : h.tipo === 'transferencia_propia' ? '↔️ ¿Plata que pasaste entre tus cuentas?' : '✅ ¿Cumple algo que habías planificado?';
+                const titulo = h.tipo === 'duplicado' ? '¿Es el mismo movimiento dos veces?' : h.tipo === 'transferencia_propia' ? '¿Plata que pasaste entre tus cuentas?' : '¿Cumple algo que habías planificado?';
                 return (
                   <View key={k} style={{ paddingVertical: 12, borderTopWidth: 1, borderTopColor: c.border }}>
                     <Text style={{ color: c.text, fontWeight: '700' }}>{titulo}<Text style={{ color: COLOR[h.confianza], fontSize: 12, fontWeight: '400' }}>  · confianza {h.confianza}</Text></Text>
@@ -312,7 +312,7 @@ export default function Asistente() {
                     <Fila m={m} />
                     <View style={{ marginHorizontal: 14, backgroundColor: c.card2, borderRadius: 10, padding: 10 }}>
                       <Text style={{ color: c.text }}>
-                        ✨ Sugerencia: {esTransf ? `transferencia a ${sug.cuentaContraria || 'otra cuenta tuya'}` : categoria ? `${catInfo(categoria).emoji} ${categoria}` : 'sin categoría'}
+                        Sugerencia: {esTransf ? `transferencia a ${sug.cuentaContraria || 'otra cuenta tuya'}` : categoria ? categoria : 'sin categoría'}
                         <Text style={{ color: COLOR[sug.confianza], fontSize: 12 }}>  · confianza {sug.confianza}</Text>
                       </Text>
                       {!!sug.motivo && <Text style={[s.sub, { marginTop: 2 }]}>{sug.motivo}</Text>}

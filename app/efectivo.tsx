@@ -9,6 +9,7 @@ import { c } from '../src/theme';
 import { centrado, MAX_FORM, Pastilla, s, tap, Tip } from '../src/ui';
 import { MONEDAS, type Moneda } from '../src/types';
 import { hoyYmd, mesActual, money, parseMonto } from '../src/util';
+import { Icono, iconoCuenta, iconoDe } from '../src/iconos';
 
 const FilaCuenta = ({ x, actual, real, onChange }: { x: Cuenta; actual: number; real: string; onChange: (t: string) => void }) => {
   const n = parseMonto(real);
@@ -17,7 +18,7 @@ const FilaCuenta = ({ x, actual, real, onChange }: { x: Cuenta; actual: number; 
     <View style={{ paddingVertical: 12, paddingHorizontal: 14, borderBottomWidth: 1, borderBottomColor: c.border }}>
       <View style={{ flexDirection: 'row', alignItems: 'center' }}>
         <View style={{ width: 40, height: 40, borderRadius: 12, backgroundColor: c.card2, alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
-          <Text style={{ fontSize: 20 }}>{emojiCuenta(x)}</Text>
+          <Icono nombre={iconoCuenta(x)} color={c.text} size={20} />
         </View>
         <View style={{ flex: 1 }}>
           <Text style={s.titulo}>{x.nombre}</Text>
@@ -45,7 +46,7 @@ type DatosBloque = { titulo: string; emoji: string; lista: Cuenta[]; total: stri
 const Bloque = ({ titulo, emoji, lista, total, vacio, actual, reales, onChange }: DatosBloque) => (
   <View style={{ marginBottom: 16 }}>
     <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginHorizontal: 4, marginBottom: 8 }}>
-      <Text style={s.h}>{emoji} {titulo}</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}><Icono nombre={iconoDe(emoji)} color={c.muted} size={18} /><Text style={s.h}>{titulo}</Text></View>
       {lista.length > 0 && <Text style={{ color: c.text, fontWeight: '700' }}>{total}</Text>}
     </View>
     <View style={{ backgroundColor: c.card, borderRadius: 16, overflow: 'hidden' }}>
@@ -143,18 +144,18 @@ export default function EfectivoDigital() {
 
       <View style={{ flexDirection: 'row', gap: 10, marginBottom: 16 }}>
         <View style={{ flex: 1, backgroundColor: c.card, borderRadius: 16, padding: 14 }}>
-          <Text style={s.sub}>💵 Efectivo</Text>
+          <Text style={s.sub}>Efectivo</Text>
           <Text style={{ color: c.text, fontSize: 20, fontWeight: '700', marginTop: 4 }} numberOfLines={1} adjustsFontSizeToFit>{money(total(efectivo), vista)}</Text>
         </View>
         <View style={{ flex: 1, backgroundColor: c.card, borderRadius: 16, padding: 14 }}>
-          <Text style={s.sub}>📱 Digital</Text>
+          <Text style={s.sub}>Digital</Text>
           <Text style={{ color: c.text, fontSize: 20, fontWeight: '700', marginTop: 4 }} numberOfLines={1} adjustsFontSizeToFit>{money(total(digital), vista)}</Text>
         </View>
       </View>
 
       {pendientes.length > 0 && (
         <View style={{ marginBottom: 16 }}>
-          <Text style={[s.h, { marginLeft: 4, marginBottom: 8 }]}>⏳ Cómo quedarían después de lo pendiente ({pendientes.length})</Text>
+          <Text style={[s.h, { marginLeft: 4, marginBottom: 8 }]}>Cómo quedarían después de lo pendiente ({pendientes.length})</Text>
           <View style={{ backgroundColor: c.card, borderRadius: 16, overflow: 'hidden' }}>
             {activas.filter((x) => proy.porCuenta.has(x.id)).map((x) => {
               const delta = proy.porCuenta.get(x.id)?.[x.moneda] ?? 0;
@@ -195,7 +196,7 @@ export default function EfectivoDigital() {
       />
 
       <Pressable onPress={guardar} disabled={!cambios.length || guardando} style={{ backgroundColor: cambios.length ? c.accent : c.border, borderRadius: 12, padding: 15, alignItems: 'center' }}>
-        <Text style={{ color: '#fff', fontWeight: '800' }}>{guardando ? 'Guardando…' : cambios.length ? `Guardar ${cambios.length} ${cambios.length === 1 ? 'cambio' : 'cambios'}` : 'Escribí un monto para ajustar'}</Text>
+        <Text style={{ color: cambios.length ? c.sobre : c.muted, fontWeight: '800' }}>{guardando ? 'Guardando…' : cambios.length ? `Guardar ${cambios.length} ${cambios.length === 1 ? 'cambio' : 'cambios'}` : 'Escribí un monto para ajustar'}</Text>
       </Pressable>
       <Text style={[s.sub, { marginTop: 12 }]}>Los movimientos sin cuenta asignada no entran en estas cuentas. Una cuenta en dólares se muestra en su moneda.</Text>
     </ScrollView>

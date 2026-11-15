@@ -8,9 +8,9 @@ import { entrarConGoogle, salir, useSesion } from '../../src/auth';
 import BloqueoAjustes from '../../src/BloqueoAjustes';
 import { exportarExcel, exportarRespaldo } from '../../src/exportar';
 import { nube } from '../../src/nube';
-import { type FuenteUsd, type Nivel, useCategorias, useFinanzas } from '../../src/store';
-import { c, catInfo } from '../../src/theme';
-import { Card, centrado, Chip, EstadoSync, MAX_FORM, MenuGrupo, MenuItem, NuevaCategoria, s, SelectorMoneda, tap, Titulo } from '../../src/ui';
+import { type FuenteUsd, useFinanzas } from '../../src/store';
+import { c } from '../../src/theme';
+import { Card, centrado, Chip, EstadoSync, MAX_FORM, MenuGrupo, MenuItem, s, SelectorMoneda, tap, Titulo } from '../../src/ui';
 import { mesActual, money, parseMonto } from '../../src/util';
 
 const FUENTES: { f: FuenteUsd; label: string }[] = [
@@ -44,30 +44,6 @@ const Cotizacion = ({ m }: { m: 'USD' | 'USDT' }) => {
         onBlur={guardar}
       />
     </View>
-  );
-};
-
-// Lista editable: tocá ✕ para borrar una categoría, "+ Nueva" para agregar.
-const ListaCategorias = ({ nivel, titulo }: { nivel: Nivel; titulo: string }) => {
-  const lista = useCategorias(nivel);
-  const borrar = useFinanzas((st) => st.borrarCategoria);
-  const onBorrar = async (x: string) => {
-    tap(true);
-    if (await confirmar('¿Borrar categoría?', `"${x}" deja de aparecer en la lista. Los movimientos que ya la usan no cambian.`, 'Borrar')) borrar(nivel, x);
-  };
-  return (
-    <>
-      <Text style={[s.h, { marginTop: 10, marginBottom: 8 }]}>{titulo}</Text>
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-        {lista.map((x) => (
-          <Pressable key={x} onPress={() => onBorrar(x)} style={{ flexDirection: 'row', alignItems: 'center', paddingLeft: 12, paddingRight: 10, paddingVertical: 8, borderRadius: 20, backgroundColor: c.card2, marginRight: 8, marginBottom: 8 }}>
-            <Text style={{ color: c.text }}>{nivel === 'cat' ? `${catInfo(x).emoji} ` : ''}{x}</Text>
-            <Text style={{ color: c.gasto, marginLeft: 8, fontWeight: '700' }}>✕</Text>
-          </Pressable>
-        ))}
-        <NuevaCategoria nivel={nivel} />
-      </View>
-    </>
   );
 };
 
@@ -107,21 +83,21 @@ const Cuenta = () => {
   const boton = { padding: 14, borderRadius: 14, alignItems: 'center', marginTop: 8 } as const;
   return (
     <Card>
-      <Titulo t="👤 Cuenta" sub={sesion ? undefined : 'Entrá con Google para guardar tus datos en la nube y usarlos en varios dispositivos.'} />
+      <Titulo t="Cuenta" sub={sesion ? undefined : 'Entrá con Google para guardar tus datos en la nube y usarlos en varios dispositivos.'} />
       {sesion ? (
         <>
           <Text style={{ color: c.text, marginBottom: 4 }}>{sesion.user.user_metadata?.full_name ?? sesion.user.email}{'\n'}<Text style={{ color: c.muted }}>{sesion.user.email}</Text></Text>
           {otraCuenta ? (
             <Text style={{ color: c.aviso, marginVertical: 8 }}>Este teléfono está atado a otra cuenta. Cerrá sesión y entrá con esa para no mezclar datos.</Text>
           ) : nubeUid ? (
-            <Text style={{ color: c.ingreso, marginVertical: 8 }}>☁️ Tus datos se guardan en la nube.</Text>
+            <Text style={{ color: c.ingreso, marginVertical: 8 }}>Tus datos se guardan en la nube.</Text>
           ) : (
             <>
               <Text style={{ color: c.muted, marginVertical: 8, lineHeight: 19 }}>
                 Migrá tus movimientos{url && token ? ' (leídos de tu hoja de Google Sheets)' : ''}, presupuestos, recurrentes y ahorros a tu cuenta. Es seguro repetirlo: no duplica.
               </Text>
               <Pressable onPress={migrar} disabled={ocupado} style={[boton, { backgroundColor: c.accent, opacity: ocupado ? 0.6 : 1 }]}>
-                <Text style={{ color: '#fff', fontWeight: '700' }}>{ocupado ? 'Migrando…' : '☁️ Migrar mis datos a la nube'}</Text>
+                <Text style={{ color: c.sobre, fontWeight: '700' }}>{ocupado ? 'Migrando…' : 'Migrar mis datos a la nube'}</Text>
               </Pressable>
             </>
           )}
@@ -131,7 +107,7 @@ const Cuenta = () => {
         </>
       ) : (
         <Pressable onPress={() => correr(entrarConGoogle)} disabled={sesion === undefined || ocupado} style={[boton, { backgroundColor: c.accent }]}>
-          <Text style={{ color: '#fff', fontWeight: '700' }}>Continuar con Google</Text>
+          <Text style={{ color: c.sobre, fontWeight: '700' }}>Continuar con Google</Text>
         </Pressable>
       )}
       {!!error && <Text style={{ color: c.gasto, marginTop: 10 }}>{error}</Text>}
@@ -187,15 +163,15 @@ const MercadoPago = () => {
   const boton = { padding: 14, borderRadius: 14, alignItems: 'center', marginTop: 8 } as const;
   return (
     <Card>
-      <Titulo t="💙 Mercado Pago" sub="Trae los movimientos de tu cuenta de Mercado Pago (solo lectura: la app nunca mueve plata). Los que ya cargaste a mano no se duplican." />
+      <Titulo t="Mercado Pago" sub="Trae los movimientos de tu cuenta de Mercado Pago (solo lectura: la app nunca mueve plata). Los que ya cargaste a mano no se duplican." />
       {estado ? (
         <>
           <Text style={{ color: c.ingreso, marginBottom: 4 }}>Conectado{estado.ultima_sync ? ` · última sincronización ${new Date(estado.ultima_sync).toLocaleString()}` : ''}</Text>
           <Pressable onPress={sync} disabled={trabajando} style={[boton, { backgroundColor: c.accent, opacity: trabajando ? 0.6 : 1 }]}>
-            <Text style={{ color: '#fff', fontWeight: '700' }}>{trabajando ? 'Trabajando…' : '↻ Sincronizar'}</Text>
+            <Text style={{ color: c.sobre, fontWeight: '700' }}>{trabajando ? 'Trabajando…' : '↻ Sincronizar'}</Text>
           </Pressable>
           <Pressable onPress={desdeInicioDeMes} disabled={trabajando} style={[boton, { backgroundColor: c.card2, opacity: trabajando ? 0.6 : 1 }]}>
-            <Text style={{ color: c.text, fontWeight: '700' }}>📅 Traer todo desde el 1/{mesActual().slice(5)} (este mes)</Text>
+            <Text style={{ color: c.text, fontWeight: '700' }}>Traer todo desde el 1/{mesActual().slice(5)} (este mes)</Text>
           </Pressable>
           <Text style={[s.sub, { marginTop: 4 }]}>La sincronización normal solo mira los últimos 2 días. Este botón pide a Mercado Pago todo el mes. Lo que ya tenés no se duplica.</Text>
           <Pressable onPress={async () => { if (await confirmar('¿Desconectar Mercado Pago?', 'Se borra la conexión. Los movimientos ya importados quedan.', 'Desconectar')) correr(async () => { await desconectarMp(); return 'Desconectado.'; }); }} disabled={trabajando} style={[boton, { backgroundColor: c.card2 }]}>
@@ -204,7 +180,7 @@ const MercadoPago = () => {
         </>
       ) : (
         <Pressable onPress={() => correr(async () => { if ((await conectarMp()) === 'ok') return `Mercado Pago conectado. ${await traer()}`; })} disabled={trabajando || estado === undefined} style={[boton, { backgroundColor: c.accent, opacity: trabajando ? 0.6 : 1 }]}>
-          <Text style={{ color: '#fff', fontWeight: '700' }}>Conectar Mercado Pago</Text>
+          <Text style={{ color: c.sobre, fontWeight: '700' }}>Conectar Mercado Pago</Text>
         </Pressable>
       )}
       {!!msg && <Text style={{ color: msg.ok ? c.text : c.gasto, marginTop: 10, lineHeight: 19 }}>{msg.texto}</Text>}
@@ -230,26 +206,30 @@ const Notificaciones = () => {
     setTrabajando(true);
     try {
       const r = await procesarNotificaciones();
-      setMsg(r.guardados || r.sinReconocer ? `${r.guardados} movimientos nuevos${r.sinReconocer ? ` · ${r.sinReconocer} notificaciones que no se entendieron` : ''}.` : 'No hay notificaciones nuevas.');
+      setMsg(!tieneAcceso()
+        ? 'Android no le dio acceso a las notificaciones a Yuro: activalo de nuevo.'
+        : !r.leidas
+          ? 'El teléfono no le pasó ninguna notificación nueva a Yuro. Si ya te llegó una de Naranja X, Mercado Pago, etc., Android puede haber frenado el servicio: desactivá y volvé a activar el acceso a notificaciones de Yuro, y en Batería poné Yuro sin restricciones.'
+          : `Se leyeron ${r.leidas}: ${r.guardados} movimientos nuevos${r.yaCargadas ? ` · ${r.yaCargadas} ya estaban cargados` : ''}${r.sinReconocer ? ` · ${r.sinReconocer} que no se entendieron` : ''}.`);
     } catch (e) { setMsg(mensajeError(e)); }
     await refrescar();
     setTrabajando(false);
   };
   return (
     <Card>
-      <Titulo t="🔔 Notificaciones del celular" sub="La app lee las notificaciones de tu banco y billeteras (Mercado Pago, Ualá, Brubank, Naranja X, Galicia…) y carga el gasto o ingreso con su hora. Solo se miran esas apps; todo se procesa en este teléfono." />
+      <Titulo t="Notificaciones del celular" sub="La app lee las notificaciones de tu banco y billeteras (Mercado Pago, Ualá, Brubank, Naranja X, Galicia…) y carga el gasto o ingreso con su hora. Solo se miran esas apps; todo se procesa en este teléfono." />
       {acceso ? (
         <>
           <Text style={{ color: c.ingreso, marginBottom: 4 }}>✓ Acceso activado. Las notificaciones se cargan al abrir la app.</Text>
           <Pressable onPress={leerAhora} disabled={trabajando} style={{ backgroundColor: c.accent, padding: 14, borderRadius: 14, alignItems: 'center', marginTop: 8, opacity: trabajando ? 0.6 : 1 }}>
-            <Text style={{ color: '#fff', fontWeight: '700' }}>{trabajando ? 'Leyendo…' : '↻ Leer ahora'}</Text>
+            <Text style={{ color: c.sobre, fontWeight: '700' }}>{trabajando ? 'Leyendo…' : '↻ Leer ahora'}</Text>
           </Pressable>
         </>
       ) : (
         <>
           <Text style={{ color: c.muted, lineHeight: 19, marginBottom: 4 }}>Android pide que lo actives vos: en la pantalla que se abre, elegí "Yuro" y activá el acceso.</Text>
           <Pressable onPress={() => { tap(true); abrirAjustes(); }} style={{ backgroundColor: c.accent, padding: 14, borderRadius: 14, alignItems: 'center', marginTop: 8 }}>
-            <Text style={{ color: '#fff', fontWeight: '700' }}>Dar acceso a las notificaciones</Text>
+            <Text style={{ color: c.sobre, fontWeight: '700' }}>Dar acceso a las notificaciones</Text>
           </Pressable>
         </>
       )}
@@ -308,14 +288,15 @@ export default function Ajustes() {
       <Cuenta />
       <MenuGrupo titulo="Tu plata">
         <MenuItem emoji="💵" color={c.ingreso} titulo="Efectivo y digital" sub="Cargá cuánta plata tenés realmente en cada lugar" ruta="/efectivo" />
-        <MenuItem emoji="🏦" color="#5dade2" titulo="Mis cuentas" sub="Cuánto tenés en cada banco, billetera o efectivo" ruta="/cuentas" />
-        <MenuItem emoji="👛" color="#48c9b0" titulo="Saldos iniciales" sub="Con cuánto empezaste el año en cada moneda" ruta="/saldos" />
-        <MenuItem emoji="🗂️" color="#48c9b0" titulo="Reservas" sub="Plata apartada para un fin, como el transporte" ruta="/reservas" />
-        <MenuItem emoji="🤝" color="#af7ac5" titulo="Deudas" sub="Lo que debés y lo que te deben" ruta="/deudas" />
+        <MenuItem emoji="🏦" color={c.transferencia} titulo="Mis cuentas" sub="Cuánto tenés en cada banco, billetera o efectivo" ruta="/cuentas" />
+        <MenuItem emoji="👛" color={c.reserva} titulo="Saldos iniciales" sub="Con cuánto empezaste el año en cada moneda" ruta="/saldos" />
+        <MenuItem emoji="🗂️" color={c.reserva} titulo="Reservas" sub="Plata apartada para un fin, como el transporte" ruta="/reservas" />
+        <MenuItem emoji="🤝" color={c.deuda} titulo="Deudas" sub="Lo que debés y lo que te deben" ruta="/deudas" />
         <MenuItem emoji="📈" color={c.ingreso} titulo="Patrimonio" sub="Cómo evoluciona todo lo que tenés" ruta="/patrimonio" />
         <MenuItem emoji="🩺" color={c.aviso} titulo="Revisar mis datos" sub="Busca y corrige movimientos mal cargados" ruta="/revisar" ultimo />
       </MenuGrupo>
       <MenuGrupo titulo="Herramientas">
+        <MenuItem emoji="🏷️" color="#e056fd" titulo="Categorías" sub="Elegí el ícono y el color de cada una, creá nuevas o borrá las que no usás" ruta="/categorias" />
         <MenuItem emoji="🧮" color={c.accent} titulo="Calculadora" sub="Sumá, restá, multiplicá, dividí y sacá porcentajes; llevá el resultado a un movimiento" ruta="/calculadora" ultimo />
       </MenuGrupo>
       <MenuGrupo titulo="Control del gasto">
@@ -324,7 +305,7 @@ export default function Ajustes() {
         <MenuItem emoji="🔁" color={c.aviso} titulo="Recurrentes" sub="Sueldo, alquiler y suscripciones que se cargan solos" ruta="/recurrentes" ultimo />
       </MenuGrupo>
       <MenuGrupo titulo="Automatizar">
-        <MenuItem emoji="📥" color="#5dade2" titulo="Importar extracto" sub="Excel o CSV de tu banco" ruta="/importar" />
+        <MenuItem emoji="📥" color={c.transferencia} titulo="Importar extracto" sub="Excel o CSV de tu banco" ruta="/importar" />
         <MenuItem emoji="🧠" color="#e056fd" titulo="Reglas automáticas" sub="Si el concepto dice “sube”, categoría Transporte" ruta="/reglas" />
         <MenuItem emoji="✨" color={c.accent} titulo="Asistente de IA" sub="Sugiere categorías para lo que no se clasificó" ruta="/ia" ultimo />
       </MenuGrupo>
@@ -332,11 +313,11 @@ export default function Ajustes() {
       {!!sesion && <MercadoPago />}
       {!nubeUid && (
       <Card>
-        <Titulo t="🔗 Google Sheets (opcional)" sub='Sin conectar, la app funciona igual y guarda todo en este teléfono. Para sincronizar con tu hoja, pegá la URL del Web App de Apps Script y el token (ver README). Lo que cargaste antes se sube al conectar.' />
+        <Titulo t="Google Sheets (opcional)" sub='Sin conectar, la app funciona igual y guarda todo en este teléfono. Para sincronizar con tu hoja, pegá la URL del Web App de Apps Script y el token (ver README). Lo que cargaste antes se sube al conectar.' />
         <TextInput style={input} placeholder="https://script.google.com/macros/s/…/exec" placeholderTextColor={c.muted} autoCapitalize="none" value={u} onChangeText={setU} />
         <TextInput style={input} placeholder="Token" placeholderTextColor={c.muted} autoCapitalize="none" secureTextEntry value={t} onChangeText={setT} />
         <Pressable onPress={async () => { tap(true); setConfig(u, t); await sincronizar(); }} style={{ backgroundColor: c.accent, padding: 14, borderRadius: 14, alignItems: 'center' }}>
-          <Text style={{ color: '#fff', fontWeight: '700' }}>{sincronizando ? 'Sincronizando…' : 'Guardar y sincronizar'}</Text>
+          <Text style={{ color: c.sobre, fontWeight: '700' }}>{sincronizando ? 'Sincronizando…' : 'Guardar y sincronizar'}</Text>
         </Pressable>
         <View style={{ marginTop: 12 }}><EstadoSync /></View>
         {versionScript !== null && <Text style={s.sub}>Versión del Apps Script: {versionScript || 'vieja (sin monedas)'}{versionScript >= 4 ? ' ✓' : ' (actualizala)'}</Text>}
@@ -345,7 +326,7 @@ export default function Ajustes() {
       )}
 
       <Card>
-        <Titulo t="💱 Monedas" sub="Cada movimiento guarda su moneda (columna J de la hoja). Los totales se convierten a la moneda que elijas." />
+        <Titulo t="Monedas" sub="Cada movimiento guarda su moneda (columna J de la hoja). Los totales se convierten a la moneda que elijas." />
         <Text style={[s.h, { marginTop: 4 }]}>Ver totales en</Text>
         <View style={{ alignSelf: 'flex-start', marginBottom: 14 }}><SelectorMoneda valor={monedaVista} onChange={setMonedaVista} /></View>
         <Text style={s.h}>Dólar de referencia para USD</Text>
@@ -361,21 +342,15 @@ export default function Ajustes() {
         {cotizaciones.fecha && <Text style={[s.sub, { marginTop: 8 }]}>Actualizada: {new Date(cotizaciones.fecha).toLocaleString()}</Text>}
       </Card>
 
-      <Card>
-        <Titulo t="🏷️ Categorías" sub="Agregá las tuyas o borrá las que no usás. Borrar una no cambia los movimientos que ya la tienen." />
-        <ListaCategorias nivel="cat" titulo="Categoría" />
-        <ListaCategorias nivel="cat2" titulo="Categoría 2" />
-      </Card>
-
       <BloqueoAjustes />
 
       <Card>
-        <Titulo t="💾 Exportar y respaldo" sub="Tus datos son tuyos: llevátelos cuando quieras." />
+        <Titulo t="Exportar y respaldo" sub="Tus datos son tuyos: llevátelos cuando quieras." />
         <Pressable onPress={async () => { tap(); try { avisar(`Listo: ${await exportarExcel()}.`); } catch (e) { avisar(e instanceof Error ? e.message : 'No se pudo exportar'); } }} style={{ paddingVertical: 10 }}>
-          <Text style={{ color: c.text }}>📊 Exportar a Excel (movimientos, cuentas, deudas…) ›</Text>
+          <Text style={{ color: c.text }}>Exportar a Excel (movimientos, cuentas, deudas…) ›</Text>
         </Pressable>
         <Pressable onPress={async () => { tap(); try { avisar(`Respaldo listo: ${await exportarRespaldo()}.`); } catch (e) { avisar(e instanceof Error ? e.message : 'No se pudo exportar'); } }} style={{ paddingVertical: 10 }}>
-          <Text style={{ color: c.text }}>🗄️ Descargar copia de seguridad (JSON) ›</Text>
+          <Text style={{ color: c.text }}>Descargar copia de seguridad (JSON) ›</Text>
         </Pressable>
       </Card>
 
