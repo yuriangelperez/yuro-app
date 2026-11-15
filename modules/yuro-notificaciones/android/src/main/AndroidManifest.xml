@@ -1,0 +1,14 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <application>
+    <!-- Servicio que Android le da a la app cuando el usuario activa "Acceso a notificaciones" -->
+    <service
+      android:name="expo.modules.yuronotificaciones.NotificacionesService"
+      android:label="Yuro"
+      android:exported="true"
+      android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+      <intent-filter>
+        <action android:name="android.service.notification.NotificationListenerService" />
+      </intent-filter>
+    </service>
+  </application>
+</manifest>

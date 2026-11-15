@@ -1,11 +1,47 @@
 {
   "expo": {
-    "name": "Mis Finanzas",
-    "slug": "mis-finanzas",
-    "scheme": "misfinanzas",
+    "name": "Yuro",
+    "slug": "yuro",
+    "scheme": "yuro",
     "userInterfaceStyle": "dark",
     "backgroundColor": "#0b0f14",
-    "web": { "bundler": "metro", "output": "single" },
-    "plugins": ["expo-router"]
+    "web": {
+      "bundler": "metro",
+      "output": "single"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-web-browser",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ],
+      "expo-secure-store",
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Yuro usa tu rostro para desbloquear la app."
+        }
+      ]
+    ],
+    "version": "1.1.0",
+    "android": {
+      "package": "com.yuriperez15.yuro",
+      "versionCode": 8,
+      "adaptiveIcon": {
+        "backgroundColor": "#0b0f14"
+      }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "d109ad2e-fc75-4640-92a3-58738a142756"
+      }
+    },
+    "owner": "yuriperez15"
   }
 }
